@@ -1,0 +1,193 @@
+import { Request, Response, Router } from 'express';
+import { trinoService } from '../services/trino.service';
+import { queryBuilderService } from '../services/query-builder.service';
+import { cacheService } from '../services/cache.service';
+import { QueryRequest, QueryResponse, ColumnarQueryResponse } from '../types/data.types';
+
+const router = Router();
+
+// =============================================================================
+// POST /api/data/query - Main data query endpoint (legacy object format)
+// =============================================================================
+router.post('/query', async (req: Request, res: Response) => {
+    const startTime = Date.now();
+
+    try {
+        const request: QueryRequest = req.body;
+
+        // Validate request
+        if (!request.dimensions || request.dimensions.length === 0) {
+            return res.status(400).json({ error: 'dimensions array is required' });
+        }
+        if (!request.metrics || request.metrics.length === 0) {
+            return res.status(400).json({ error: 'metrics array is required' });
+        }
+
+        // Set defaults
+        request.offset = request.offset ?? 0;
+        request.limit = Math.min(request.limit ?? 50, 500); // Max 500 rows per request
+        request.filters = request.filters ?? [];
+        request.sort = request.sort ?? [];
+
+        // Check cache
+        const cached = cacheService.get<Record<string, unknown>>(request);
+        if (cached) {
+            const response: QueryResponse = {
+                data: cached.data,
+                totalRows: cached.totalRows,
+                queryTimeMs: Date.now() - startTime,
+                cached: true,
+            };
+            return res.json(response);
+        }
+
+        // Build SQL queries
+        const metadata = queryBuilderService.getMetadata();
+        const fullTableName = metadata.tableName;
+        const { sql, countSql } = queryBuilderService.buildQuery(request, fullTableName);
+
+        console.log('[DataController] Executing query:', sql.substring(0, 200) + '...');
+
+        // Execute queries in parallel
+        const [dataResult, countResult] = await Promise.all([
+            trinoService.query(sql),
+            trinoService.query(countSql),
+        ]);
+
+        const totalRows = countResult.data[0]?.total_count as number ?? 0;
+
+        // Cache the result
+        cacheService.set(request, dataResult.data, totalRows);
+
+        const response: QueryResponse = {
+            data: dataResult.data,
+            totalRows,
+            queryTimeMs: Date.now() - startTime,
+            cached: false,
+        };
+
+        return res.json(response);
+    } catch (error) {
+        console.error('[DataController] Query error:', error);
+        return res.status(500).json({
+            error: 'Query execution failed',
+            message: error instanceof Error ? error.message : 'Unknown error',
+        });
+    }
+});
+
+// =============================================================================
+// POST /api/data/query-raw - Optimized columnar format endpoint
+// Returns columns once + data as array of arrays (60% smaller, faster parsing)
+// =============================================================================
+router.post('/query-raw', async (req: Request, res: Response) => {
+    const startTime = Date.now();
+
+    try {
+        const request: QueryRequest = req.body;
+
+        // Validate request
+        if (!request.dimensions || request.dimensions.length === 0) {
+            return res.status(400).json({ error: 'dimensions array is required' });
+        }
+        if (!request.metrics || request.metrics.length === 0) {
+            return res.status(400).json({ error: 'metrics array is required' });
+        }
+
+        // Set defaults
+        request.offset = request.offset ?? 0;
+        request.limit = Math.min(request.limit ?? 100, 1000); // Allow larger batches for raw format
+        request.filters = request.filters ?? [];
+        request.sort = request.sort ?? [];
+
+        // Build SQL queries
+        const metadata = queryBuilderService.getMetadata();
+        const fullTableName = metadata.tableName;
+        const { sql, countSql } = queryBuilderService.buildQuery(request, fullTableName);
+
+        console.log('[DataController] Executing raw query:', sql.substring(0, 200) + '...');
+
+        // Execute queries in parallel using raw format
+        const [dataResult, countResult] = await Promise.all([
+            trinoService.queryRaw(sql),
+            trinoService.queryRaw(countSql),
+        ]);
+
+        const totalRows = Number(countResult.data[0]?.[0]) || 0;
+
+        const response: ColumnarQueryResponse = {
+            columns: dataResult.columns,
+            columnTypes: dataResult.columnTypes,
+            data: dataResult.data,
+            totalRows,
+            queryTimeMs: Date.now() - startTime,
+            cached: false,
+        };
+
+        return res.json(response);
+    } catch (error) {
+        console.error('[DataController] Raw query error:', error);
+        return res.status(500).json({
+            error: 'Query execution failed',
+            message: error instanceof Error ? error.message : 'Unknown error',
+        });
+    }
+});
+
+// =============================================================================
+// GET /api/data/metadata - Get table metadata (columns, types)
+// =============================================================================
+router.get('/metadata', (_req: Request, res: Response) => {
+    try {
+        const metadata = queryBuilderService.getMetadata();
+        return res.json(metadata);
+    } catch (error) {
+        console.error('[DataController] Metadata error:', error);
+        return res.status(500).json({
+            error: 'Failed to get metadata',
+            message: error instanceof Error ? error.message : 'Unknown error',
+        });
+    }
+});
+
+// =============================================================================
+// GET /api/data/filters/:column - Get distinct values for filter dropdown
+// =============================================================================
+router.get('/filters/:column', async (req: Request, res: Response) => {
+    try {
+        const { column } = req.params;
+        const limit = parseInt(req.query.limit as string, 10) || 1000;
+
+        const fullTableName = queryBuilderService.getMetadata().tableName;
+        const sql = queryBuilderService.buildDistinctValuesQuery(column, fullTableName, limit);
+
+        const result = await trinoService.query(sql);
+        const values = result.data.map((row) => row.value);
+
+        return res.json({ column, values });
+    } catch (error) {
+        console.error('[DataController] Filter values error:', error);
+        return res.status(500).json({
+            error: 'Failed to get filter values',
+            message: error instanceof Error ? error.message : 'Unknown error',
+        });
+    }
+});
+
+// =============================================================================
+// GET /api/data/cache/stats - Get cache statistics
+// =============================================================================
+router.get('/cache/stats', (_req: Request, res: Response) => {
+    const stats = cacheService.getStats();
+    return res.json(stats);
+});
+
+// =============================================================================
+// POST /api/data/cache/clear - Clear cache
+// =============================================================================
+router.post('/cache/clear', (_req: Request, res: Response) => {
+    cacheService.clear();
+    return res.json({ success: true, message: 'Cache cleared' });
+});
+
+export default router;

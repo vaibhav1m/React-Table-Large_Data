@@ -1,0 +1,129 @@
+.drill-down-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.drill-down-modal {
+    background-color: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+    min-width: 500px;
+    max-width: 700px;
+    max-height: 80vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.drill-down-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    padding: 24px;
+    overflow-y: auto;
+}
+
+.drill-down-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    font-size: 14px;
+    color: #333;
+}
+
+.drill-down-item:hover {
+    background-color: #f5f5f5;
+}
+
+.drill-down-item input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: #8b5cf6;
+    cursor: pointer;
+}
+
+.drill-down-item input[type="checkbox"]:checked {
+    background-color: #8b5cf6;
+}
+
+.drill-down-item span {
+    flex: 1;
+    user-select: none;
+}
+
+.drill-down-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    border-top: 1px solid #e5e5e5;
+    background-color: #fafafa;
+}
+
+.actions-right {
+    display: flex;
+    gap: 12px;
+}
+
+.btn-reset,
+.btn-cancel,
+.btn-apply {
+    padding: 10px 24px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.btn-reset {
+    background-color: transparent;
+    border: 1px solid #e5e5e5;
+    color: #666;
+}
+
+.btn-reset:hover {
+    background-color: #f5f5f5;
+    border-color: #d5d5d5;
+}
+
+.btn-cancel {
+    background-color: transparent;
+    border: 1px solid #e5e5e5;
+    color: #333;
+}
+
+.btn-cancel:hover {
+    background-color: #f5f5f5;
+    border-color: #d5d5d5;
+}
+
+.btn-apply {
+    background-color: #8b5cf6;
+    border: 1px solid #8b5cf6;
+    color: #ffffff;
+}
+
+.btn-apply:hover:not(:disabled) {
+    background-color: #7c3aed;
+    border-color: #7c3aed;
+}
+
+.btn-apply:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
