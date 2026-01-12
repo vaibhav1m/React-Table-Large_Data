@@ -6,39 +6,46 @@ import { DrillDownSelector } from './DrillDownSelector';
 import { useAppDispatch, useAppSelector } from '../../hooks/useRedux';
 import {
     fetchMetadata,
-    fetchDataRaw,
-    loadMoreData,
+    fetchInitialData,
+    fetchDataRange,
     setSelectedDimensions,
-    setSort
+    setSort,
+    selectHasMoreData,
 } from '../../store/dataGridSlice';
 import './DataGrid.css';
 
 // =============================================================================
-// DataGrid Component - Wrapper for VirtualTable with Redux integration
+// DataGrid Component - Hybrid prefetching with local metrics filtering
 // =============================================================================
 
-// Extended state type for infinite scroll
 interface ExtendedState {
     dataGrid: {
         selectedDimensions: string[];
         selectedMetrics: string[];
         sort: { column: string; direction: 'asc' | 'desc' }[];
         isLoading: boolean;
-        isLoadingMore: boolean;
-        hasMoreData: boolean;
+        isPrefetching: boolean;
         error: string | null;
         metadata: {
             dimensions: { name: string; label: string; type: string }[];
-            metrics: { name: string; label: string; type: string; aggregation: string }[]
+            metrics: { name: string; label: string; type: string; aggregation: string }[];
         } | null;
         columns: string[];
         columnTypes: string[];
         data: (string | number | null)[][];
+        allData: (string | number | null)[][];
         totalRows: number;
         queryTimeMs: number;
         cached: boolean;
+        needsDataRefresh: boolean;
+        searchText: string;
+        filters: { column: string; operator: string; value: unknown }[];
+        comparison: unknown;
     };
 }
+
+// Batch size for loading more data
+const BATCH_SIZE = 2000;
 
 export const DataGrid: React.FC = () => {
     const dispatch = useAppDispatch();
@@ -47,17 +54,20 @@ export const DataGrid: React.FC = () => {
         selectedMetrics,
         sort,
         isLoading,
-        isLoadingMore,
-        hasMoreData,
+        isPrefetching,
         error,
         metadata,
         columns,
         columnTypes,
         data,
+        allData,
         totalRows,
         queryTimeMs,
         cached,
+        needsDataRefresh,
     } = useAppSelector((state) => (state as unknown as ExtendedState).dataGrid);
+
+    const hasMoreData = useAppSelector(selectHasMoreData);
 
     const [showDrillDown, setShowDrillDown] = React.useState(false);
 
@@ -67,22 +77,21 @@ export const DataGrid: React.FC = () => {
         dispatch(fetchMetadata());
     }, [dispatch]);
 
-    // Fetch data when dimensions, metrics, or sort changes
+    // Fetch data when needsDataRefresh is true
     useEffect(() => {
-        if (metadata && selectedDimensions.length > 0 && selectedMetrics.length > 0) {
-            console.log('[DataGrid] Fetching initial data...', { selectedDimensions, selectedMetrics });
-            dispatch(fetchDataRaw({})); // Use default PAGE_SIZE from slice
+        if (metadata && needsDataRefresh && selectedDimensions.length > 0) {
+            console.log('[DataGrid] Data refresh needed, fetching...');
+            dispatch(fetchInitialData());
         }
-    }, [dispatch, metadata, selectedDimensions, selectedMetrics, sort]);
+    }, [dispatch, metadata, needsDataRefresh, selectedDimensions]);
 
     // Build column definitions for VirtualTable
     const tableColumns: VirtualTableColumn[] = useMemo(() => {
         if (columns.length === 0 || !metadata) return [];
 
         return columns.map((colName, index) => {
-            // Find column info from metadata
-            const dimInfo = metadata.dimensions.find(d => d.name === colName);
-            const metricInfo = metadata.metrics.find(m => m.name === colName);
+            const dimInfo = metadata.dimensions.find((d) => d.name === colName);
+            const metricInfo = metadata.metrics.find((m) => m.name === colName);
 
             return {
                 name: colName,
@@ -93,34 +102,55 @@ export const DataGrid: React.FC = () => {
         });
     }, [columns, columnTypes, metadata]);
 
-    // Handle sort
-    const handleSort = useCallback((column: string, direction: 'asc' | 'desc') => {
-        dispatch(setSort([{ column, direction }]));
-    }, [dispatch]);
+    // Handle sort - triggers new server query
+    const handleSort = useCallback(
+        (column: string, direction: 'asc' | 'desc') => {
+            console.log('[DataGrid] Sort changed:', column, direction);
+            dispatch(setSort([{ column, direction }]));
+        },
+        [dispatch]
+    );
 
-    // Handle load more (infinite scroll)
+    // Handle load more - fetch next batch
     const handleLoadMore = useCallback(() => {
-        console.log('[DataGrid] Loading more data...');
-        dispatch(loadMoreData());
-    }, [dispatch]);
+        if (isLoading || isPrefetching) return;
+
+        const nextOffset = allData.length;
+        if (nextOffset >= totalRows) return;
+
+        console.log('[DataGrid] Loading more data from offset:', nextOffset);
+        dispatch(fetchDataRange({ offset: nextOffset, limit: BATCH_SIZE, isPrefetch: false }));
+    }, [dispatch, allData.length, totalRows, isLoading, isPrefetching]);
+
+    // Handle scroll progress (for prefetch detection)
+    const handleScrollProgressCallback = useCallback((_progress: number, _endIndex: number) => {
+        // Prefetch logic is handled by VirtualTable's onLoadMore
+    }, []);
 
     // Handle drill-down apply
-    const handleDrillDownApply = useCallback((dimensions: string[]) => {
-        dispatch(setSelectedDimensions(dimensions));
-        setShowDrillDown(false);
-    }, [dispatch]);
+    const handleDrillDownApply = useCallback(
+        (dimensions: string[]) => {
+            dispatch(setSelectedDimensions(dimensions));
+            setShowDrillDown(false);
+        },
+        [dispatch]
+    );
 
     // Get current sort
     const currentSortColumn = sort[0]?.column;
     const currentSortDirection = sort[0]?.direction;
 
-    // Show loading while fetching metadata
-    if (!metadata) {
+    // Show loading only on initial load
+    if (!metadata || (isLoading && data.length === 0)) {
         return (
             <div className="data-grid-wrapper">
                 <div className="loading-container">
                     <div className="loading-spinner" />
-                    <p>Loading table schema...</p>
+                    <p>
+                        {!metadata
+                            ? 'Loading table schema...'
+                            : 'Loading data...'}
+                    </p>
                 </div>
             </div>
         );
@@ -137,11 +167,19 @@ export const DataGrid: React.FC = () => {
                 isLoading={isLoading}
             />
 
+            {/* Status indicator */}
+            <div className="duckdb-indicator">
+                📊 {allData.length.toLocaleString()} of {totalRows.toLocaleString()} rows loaded
+                {' • '}{columns.length} columns shown (of {selectedDimensions.length} dims + {selectedMetrics.length} metrics)
+                {queryTimeMs > 0 && ` • Query: ${queryTimeMs.toFixed(0)}ms`}
+                {isPrefetching && ' • Prefetching...'}
+            </div>
+
             {/* Error message */}
             {error && (
                 <div className="error-banner">
                     <span>⚠️ {error}</span>
-                    <button onClick={() => dispatch(fetchDataRaw({}))}>Retry</button>
+                    <button onClick={() => dispatch(fetchInitialData())}>Retry</button>
                 </div>
             )}
 
@@ -155,10 +193,11 @@ export const DataGrid: React.FC = () => {
                     rowHeight={40}
                     onSort={handleSort}
                     onLoadMore={handleLoadMore}
+                    onScrollProgress={handleScrollProgressCallback}
                     sortColumn={currentSortColumn}
                     sortDirection={currentSortDirection}
-                    isLoading={isLoading}
-                    isLoadingMore={isLoadingMore}
+                    isLoading={isLoading && data.length > 0}
+                    isLoadingMore={isPrefetching}
                     hasMoreData={hasMoreData}
                 />
             </div>
@@ -166,7 +205,9 @@ export const DataGrid: React.FC = () => {
             {/* Drill-Down Selector Modal */}
             {showDrillDown && metadata && (
                 <DrillDownSelector
-                    availableDimensions={metadata.dimensions as unknown as import('../../types/data.types').DimensionColumn[]}
+                    availableDimensions={
+                        metadata.dimensions as unknown as import('../../types/data.types').DimensionColumn[]
+                    }
                     selectedDimensions={selectedDimensions}
                     onApply={handleDrillDownApply}
                     onClose={() => setShowDrillDown(false)}

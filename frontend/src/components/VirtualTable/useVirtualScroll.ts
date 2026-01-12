@@ -18,6 +18,7 @@ export interface VirtualScrollResult {
     offsetTop: number;
     totalHeight: number;
     handleScroll: (scrollTop: number) => void;
+    actualFirstVisibleIndex: number;
 }
 
 export function useVirtualScroll({
@@ -30,15 +31,19 @@ export function useVirtualScroll({
     const tickingRef = useRef(false);
 
     // Calculate visible range
-    const { startIndex, endIndex, visibleRows } = useMemo(() => {
+    const { startIndex, endIndex, visibleRows, actualFirstVisibleIndex } = useMemo(() => {
         const visibleCount = Math.ceil(containerHeight / rowHeight);
-        const start = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+        // Actual first visible row (no overscan)
+        const rawStart = Math.floor(scrollTop / rowHeight);
+        // With overscan buffer
+        const start = Math.max(0, rawStart - overscan);
         const end = Math.min(totalRows, Math.ceil((scrollTop + containerHeight) / rowHeight) + overscan);
 
         return {
             startIndex: start,
             endIndex: end,
             visibleRows: visibleCount,
+            actualFirstVisibleIndex: rawStart,
         };
     }, [scrollTop, containerHeight, rowHeight, totalRows, overscan]);
 
@@ -66,6 +71,7 @@ export function useVirtualScroll({
         offsetTop,
         totalHeight,
         handleScroll,
+        actualFirstVisibleIndex,
     };
 }
 

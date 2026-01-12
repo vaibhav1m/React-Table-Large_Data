@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 3001;
 app.use(compression()); // Gzip compression - reduces response size by 70-80%
 
 app.use(cors({
-    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:3000'], // Vite ports + CRA
+    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:3000'], // Vite ports + CRA
     credentials: true,
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -74,6 +74,8 @@ async function startServer() {
         console.log(`[Server] Running on http://localhost:${PORT}`);
         console.log(`[Server] API endpoints:`);
         console.log(`  POST /api/data/query    - Query data`);
+        console.log(`  POST /api/data/query-raw - Query data (columnar)`);
+        console.log(`  POST /api/data/search   - Search autocomplete`);
         console.log(`  GET  /api/data/metadata - Get column metadata`);
         console.log(`  GET  /api/data/filters/:column - Get filter values`);
         console.log(`  GET  /api/data/cache/stats - Cache statistics`);

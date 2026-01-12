@@ -1,0 +1,201 @@
+/* =============================================================================
+   SearchBar Styles
+   ============================================================================= */
+
+.search-bar-container {
+    position: relative;
+    flex: 1;
+    max-width: 500px;
+}
+
+.search-input-wrapper {
+    display: flex;
+    align-items: center;
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 0 8px 0 12px;
+    height: 40px;
+    transition: all 0.2s ease;
+    gap: 8px;
+}
+
+.search-input-wrapper:focus-within {
+    border-color: #6b46c1;
+    box-shadow: 0 0 0 3px rgba(107, 70, 193, 0.1);
+}
+
+.search-input-wrapper.has-filter {
+    background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%);
+    border-color: #a78bfa;
+    padding-left: 10px;
+}
+
+/* Search icon on the left */
+.search-icon {
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    color: #a0aec0;
+    flex-shrink: 0;
+}
+
+/* Filter badge showing the column type */
+.filter-badge {
+    display: inline-flex;
+    align-items: center;
+    background: #6b46c1;
+    color: white;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 6px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* Input field */
+.search-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    padding: 0;
+    font-size: 14px;
+    color: #2d3748;
+    background: transparent;
+    min-width: 80px;
+}
+
+.search-input::placeholder {
+    color: #a0aec0;
+    font-size: 13px;
+}
+
+/* Loading spinner */
+.search-spinner {
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    border: 2px solid #e2e8f0;
+    border-top-color: #6b46c1;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    flex-shrink: 0;
+}
+
+/* Clear button - X icon */
+.search-clear-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+    background: #e2e8f0;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+    margin-left: 4px;
+}
+
+.search-clear-btn:hover {
+    background: #dc2626;
+    transform: scale(1.05);
+}
+
+.search-clear-btn svg {
+    width: 12px;
+    height: 12px;
+    color: #4a5568;
+}
+
+.search-clear-btn:hover svg {
+    color: white;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* =============================================================================
+   Dropdown Styles
+   ============================================================================= */
+
+.search-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    max-height: 350px;
+    overflow-y: auto;
+    z-index: 1000;
+}
+
+.search-group {
+    border-bottom: 1px solid #edf2f7;
+}
+
+.search-group:last-child {
+    border-bottom: none;
+}
+
+.search-group-header {
+    padding: 8px 14px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #718096;
+    background: #f7fafc;
+    position: sticky;
+    top: 0;
+}
+
+.search-result {
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: background 0.12s ease;
+}
+
+.search-result:hover,
+.search-result.focused {
+    background: #edf2f7;
+}
+
+.result-value {
+    font-size: 14px;
+    color: #2d3748;
+}
+
+/* =============================================================================
+   Responsive
+   ============================================================================= */
+
+@media (max-width: 768px) {
+    .search-bar-container {
+        max-width: 100%;
+    }
+
+    .search-dropdown {
+        max-height: 280px;
+    }
+
+    .filter-badge {
+        font-size: 9px;
+        padding: 2px 5px;
+    }
+
+    .search-input::placeholder {
+        font-size: 12px;
+    }
+}

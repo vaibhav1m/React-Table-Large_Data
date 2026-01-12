@@ -10,8 +10,10 @@ const api = axios.create({
     },
 });
 
-// AbortController for request deduplication
-let currentQueryController: AbortController | null = null;
+// Separate AbortControllers for different request types
+// This prevents prefetch from being cancelled when initial fetch is made
+let initialQueryController: AbortController | null = null;
+let prefetchController: AbortController | null = null;
 
 // =============================================================================
 // Data API Service
@@ -28,21 +30,81 @@ export const dataService = {
 
     /**
      * Query data with optimized columnar format
-     * Automatically cancels previous pending requests (deduplication)
+     * Cancels previous initial queries (not prefetch) to prevent stale data
      */
-    async queryRaw(request: QueryRequest): Promise<ColumnarQueryResponse> {
-        // Cancel previous request if pending
-        if (currentQueryController) {
-            currentQueryController.abort();
+    async queryRaw(request: QueryRequest, isPrefetch: boolean = false): Promise<ColumnarQueryResponse> {
+        // Use different controller based on request type
+        if (isPrefetch) {
+            // Cancel previous prefetch if any
+            if (prefetchController) {
+                prefetchController.abort();
+            }
+            prefetchController = new AbortController();
+
+            try {
+                const response = await api.post<ColumnarQueryResponse>(
+                    '/api/data/query-raw',
+                    request,
+                    { signal: prefetchController.signal }
+                );
+                return response.data;
+            } catch (error) {
+                if (axios.isCancel(error)) {
+                    throw new Error('Request cancelled');
+                }
+                throw error;
+            }
+        } else {
+            // Initial/regular query - cancel previous initial query
+            if (initialQueryController) {
+                initialQueryController.abort();
+            }
+            initialQueryController = new AbortController();
+
+            try {
+                const response = await api.post<ColumnarQueryResponse>(
+                    '/api/data/query-raw',
+                    request,
+                    { signal: initialQueryController.signal }
+                );
+                return response.data;
+            } catch (error) {
+                if (axios.isCancel(error)) {
+                    throw new Error('Request cancelled');
+                }
+                throw error;
+            }
         }
-        currentQueryController = new AbortController();
+    },
+
+    /**
+     * Fetch ALL data from backend for DuckDB initialization
+     * This loads all rows in one request (no pagination)
+     */
+    async fetchAllData(dimensions: string[], metrics: string[]): Promise<ColumnarQueryResponse> {
+        // Cancel any existing requests
+        if (initialQueryController) {
+            initialQueryController.abort();
+        }
+        initialQueryController = new AbortController();
 
         try {
+            const request: QueryRequest = {
+                dimensions,
+                metrics,
+                filters: [],
+                sort: [],
+                offset: 0,
+                limit: 100000, // Load all rows
+            };
+
+            console.log('[API] Fetching all data for DuckDB...');
             const response = await api.post<ColumnarQueryResponse>(
                 '/api/data/query-raw',
                 request,
-                { signal: currentQueryController.signal }
+                { signal: initialQueryController.signal }
             );
+            console.log(`[API] Fetched ${response.data.data.length} rows`);
             return response.data;
         } catch (error) {
             if (axios.isCancel(error)) {
@@ -86,5 +148,20 @@ export const dataService = {
         );
         return response.data;
     },
-};
 
+    /**
+     * Search for autocomplete results
+     */
+    async search(query: string, columns?: string[]): Promise<{
+        results: Array<{ column: string; value: string; label: string }>;
+        groupedResults: Record<string, string[]>;
+        queryTimeMs: number;
+    }> {
+        const response = await api.post<{
+            results: Array<{ column: string; value: string; label: string }>;
+            groupedResults: Record<string, string[]>;
+            queryTimeMs: number;
+        }>('/api/data/search', { query, columns, limit: 50 });
+        return response.data;
+    },
+};

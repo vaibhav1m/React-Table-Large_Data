@@ -1,6 +1,6 @@
 import React, { useRef, useCallback, useMemo, memo, useEffect, useState } from 'react';
 import { useVirtualScroll } from './useVirtualScroll';
-// import { useRowSpanning } from './useRowSpanning'; // Temporarily disabled for alignment fix
+import { useRowSpanning } from './useRowSpanning';
 import './VirtualTable.css';
 
 // =============================================================================
@@ -23,6 +23,7 @@ export interface VirtualTableProps {
     onScroll?: (scrollTop: number, scrollLeft: number) => void;
     onSort?: (column: string, direction: 'asc' | 'desc') => void;
     onLoadMore?: () => void;
+    onScrollProgress?: (progress: number, endIndex: number) => void; // For prefetch triggering
     sortColumn?: string;
     sortDirection?: 'asc' | 'desc';
     isLoading?: boolean;
@@ -87,10 +88,11 @@ interface VirtualRowProps {
     columns: VirtualTableColumn[];
     style: React.CSSProperties;
     dimensionCount: number;
-    shouldRender: (rowIndex: number, colIndex: number) => boolean;
-    getRowSpan: (rowIndex: number, colIndex: number) => number;
-    rowHeight: number;
+    getGroupInfo: (rowIndex: number, colIndex: number) => { value: string | number | null; startRow: number; rowCount: number } | null;
+    isGroupingColumn: (colIndex: number) => boolean;
     totalWidth: number;
+    firstVisibleRowIndex: number; // The first visible row in the viewport
+    rowHeight: number;
 }
 
 const VirtualRow = memo<VirtualRowProps>(({
@@ -99,57 +101,65 @@ const VirtualRow = memo<VirtualRowProps>(({
     columns,
     style,
     dimensionCount,
-    shouldRender,
-    getRowSpan,
-    rowHeight,
+    getGroupInfo,
+    isGroupingColumn,
     totalWidth,
+    firstVisibleRowIndex,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    rowHeight: _rowHeight,
 }) => {
     return (
         <div className="virtual-row" style={{ ...style, width: totalWidth, minWidth: totalWidth }}>
             {columns.map((col, colIndex) => {
                 const colWidth = getColumnWidth(col, colIndex, dimensionCount);
                 const isDimension = colIndex < dimensionCount;
+                const isGrouped = isGroupingColumn(colIndex);
 
-                // For row-spanned cells that shouldn't render, still render a placeholder
-                // to maintain the flex layout width
-                if (!shouldRender(rowIndex, colIndex)) {
-                    return (
-                        <div
-                            key={col.name}
-                            className="virtual-cell placeholder"
-                            style={{
-                                width: colWidth,
-                                minWidth: colWidth,
-                                maxWidth: colWidth,
-                                height: rowHeight,
-                                visibility: 'hidden', // Hide but maintain space
-                            }}
-                        />
-                    );
+                // Get group info for this cell
+                const groupInfo = isGrouped ? getGroupInfo(rowIndex, colIndex) : null;
+
+                // For grouped columns, determine if THIS row should show the floating label
+                // Show label if: this row is the first visible row within this group
+                let showGroupLabel = false;
+                if (isGrouped && groupInfo) {
+                    const groupStartRow = groupInfo.startRow;
+
+                    // Show label on the first visible row of the group
+                    // If group starts above viewport, show on first visible row
+                    // Otherwise show on the actual group start row
+                    const effectiveFirstRow = Math.max(groupStartRow, firstVisibleRowIndex);
+                    showGroupLabel = rowIndex === effectiveFirstRow;
                 }
 
-                const span = getRowSpan(rowIndex, colIndex);
-                const value = rowData[colIndex];
-                const isNumber = typeof value === 'number';
+                // For grouped columns, show the value from the group
+                const displayValue = groupInfo ? groupInfo.value : rowData[colIndex];
+                const isNumber = typeof displayValue === 'number';
+
+                // Check if this is the first row of a group
+                const isFirstInGroup = groupInfo ? rowIndex === groupInfo.startRow : true;
+
+                // Check if this is the last row of a group
+                const isLastInGroup = groupInfo ? rowIndex === groupInfo.startRow + groupInfo.rowCount - 1 : true;
 
                 return (
                     <div
                         key={col.name}
-                        className={`virtual-cell ${isDimension ? 'dimension' : 'metric'} ${isNumber ? 'number' : ''}`}
+                        className={`virtual-cell ${isDimension ? 'dimension' : 'metric'} ${isNumber ? 'number' : ''} ${isGrouped ? 'grouped' : ''} ${isFirstInGroup ? 'group-start' : ''} ${isLastInGroup ? 'group-end' : ''} ${showGroupLabel ? 'show-label' : ''}`}
                         style={{
                             width: colWidth,
                             minWidth: colWidth,
                             maxWidth: colWidth,
-                            height: span > 1 ? span * rowHeight : rowHeight,
-                            ...(span > 1 && {
-                                position: 'absolute',
-                                zIndex: 1,
-                                top: 0,
-                            }),
                         }}
-                        title={String(value ?? '')}
+                        title={String(displayValue ?? '')}
                     >
-                        <span className="cell-content">{formatValue(value, col.type)}</span>
+                        {/* For grouped columns, show value only on the first visible row of the group */}
+                        {isGrouped && groupInfo ? (
+                            <span className={`cell-content ${showGroupLabel ? 'sticky-group-value' : 'hidden-label'}`}>
+                                {showGroupLabel ? formatValue(groupInfo.value, col.type) : ''}
+                            </span>
+                        ) : (
+                            <span className="cell-content">{formatValue(displayValue, col.type)}</span>
+                        )}
                     </div>
                 );
             })}
@@ -243,6 +253,7 @@ export const VirtualTable: React.FC<VirtualTableProps> = ({
     onScroll,
     onSort,
     onLoadMore,
+    onScrollProgress,
     sortColumn,
     sortDirection,
     isLoading = false,
@@ -283,6 +294,7 @@ export const VirtualTable: React.FC<VirtualTableProps> = ({
         offsetTop,
         totalHeight,
         handleScroll: updateScrollState,
+        actualFirstVisibleIndex,
     } = useVirtualScroll({
         totalRows: data.length,
         rowHeight,
@@ -290,22 +302,19 @@ export const VirtualTable: React.FC<VirtualTableProps> = ({
         overscan: 10,
     });
 
-    // Row spanning calculation - DISABLED for debugging alignment
-    // const { shouldRender, getRowSpan } = useRowSpanning({
-    //     data,
-    //     dimensionCount,
-    // });
-
-    // Temporarily disable row spanning to test alignment
-    const shouldRender = () => true;
-    const getRowSpan = () => 1;
+    // Row grouping calculation for category columns
+    const { getGroupInfo, isGroupingColumn } = useRowSpanning({
+        data,
+        dimensionCount,
+        columnNames: columns.map(c => c.name),
+    });
 
     // Reset load trigger when data changes
     useEffect(() => {
         loadMoreTriggeredRef.current = false;
     }, [data.length]);
 
-    // Scroll handler with horizontal sync and infinite scroll detection
+    // Scroll handler with horizontal sync, prefetch trigger, and infinite scroll detection
     const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
         const target = e.target as HTMLDivElement;
         const scrollTop = target.scrollTop;
@@ -318,7 +327,26 @@ export const VirtualTable: React.FC<VirtualTableProps> = ({
         updateScrollState(scrollTop);
         onScroll?.(scrollTop, target.scrollLeft);
 
-        // Check if near bottom for infinite scroll
+        // Calculate scroll progress (0-1) through loaded data
+        const scrollProgress = data.length > 0 ? endIndex / data.length : 0;
+        onScrollProgress?.(scrollProgress, endIndex);
+
+        // Early prefetch trigger at 70% through loaded data
+        const PREFETCH_THRESHOLD = 0.7;
+        if (
+            scrollProgress >= PREFETCH_THRESHOLD &&
+            hasMoreData &&
+            !isLoadingMore &&
+            !isLoading &&
+            !loadMoreTriggeredRef.current &&
+            onLoadMore
+        ) {
+            loadMoreTriggeredRef.current = true;
+            console.log('[VirtualTable] Prefetch triggered at', Math.round(scrollProgress * 100) + '% through loaded data');
+            onLoadMore();
+        }
+
+        // Also check if near bottom as fallback
         const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
         const threshold = 500;
 
@@ -331,10 +359,10 @@ export const VirtualTable: React.FC<VirtualTableProps> = ({
             onLoadMore
         ) {
             loadMoreTriggeredRef.current = true;
-            console.log('[VirtualTable] Triggering load more, distance from bottom:', distanceFromBottom);
+            console.log('[VirtualTable] Load more triggered at bottom, distance:', distanceFromBottom);
             onLoadMore();
         }
-    }, [updateScrollState, onScroll, hasMoreData, isLoadingMore, isLoading, onLoadMore]);
+    }, [updateScrollState, onScroll, onScrollProgress, hasMoreData, isLoadingMore, isLoading, onLoadMore, data.length, endIndex]);
 
     // Get visible rows
     const visibleRows = useMemo(() => {
@@ -383,10 +411,11 @@ export const VirtualTable: React.FC<VirtualTableProps> = ({
                                     columns={columns}
                                     style={{ height: rowHeight }}
                                     dimensionCount={dimensionCount}
-                                    shouldRender={shouldRender}
-                                    getRowSpan={getRowSpan}
-                                    rowHeight={rowHeight}
+                                    getGroupInfo={getGroupInfo}
+                                    isGroupingColumn={isGroupingColumn}
                                     totalWidth={totalWidth}
+                                    firstVisibleRowIndex={actualFirstVisibleIndex}
+                                    rowHeight={rowHeight}
                                 />
                             );
                         })}

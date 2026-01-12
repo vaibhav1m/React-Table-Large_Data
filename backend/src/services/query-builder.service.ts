@@ -323,33 +323,44 @@ FROM (
 
     /**
      * Build ORDER BY clause
+     * Always sorts by all dimensions first for proper hierarchical grouping,
+     * then applies user's sort as a tiebreaker
      */
     private buildOrderByClause(
         sort: SortConfig[],
         validDimensions: string[],
         validMetrics: string[]
     ): string {
+        // Always sort by ALL dimensions in order for hierarchical grouping
+        // This ensures rows are grouped properly (like Power BI matrix)
+        const dimensionOrderParts = validDimensions.map(d => `"${d}" ASC`);
+
         if (!sort || sort.length === 0) {
-            // Default sort by first dimension
-            return `ORDER BY "${validDimensions[0]}" ASC`;
+            // Default: just dimension ordering for proper grouping
+            return `ORDER BY ${dimensionOrderParts.join(', ')}`;
         }
 
+        // Add user's sort columns as secondary sort (for tiebreaking within groups)
         const validColumns = new Set([...validDimensions, ...validMetrics]);
-        const orderParts: string[] = [];
+        const userOrderParts: string[] = [];
 
         for (const s of sort) {
-            // Handle metric columns with _curr suffix
             let columnName = s.column;
+            // Handle metric columns with _curr suffix
             if (columnName.endsWith('_curr') || columnName.endsWith('_comp') ||
                 columnName.endsWith('_diff') || columnName.endsWith('_diff_pct')) {
-                // These are calculated columns, use as-is
-                orderParts.push(`"${columnName}" ${s.direction.toUpperCase()}`);
+                userOrderParts.push(`"${columnName}" ${s.direction.toUpperCase()}`);
             } else if (validColumns.has(columnName)) {
-                orderParts.push(`"${columnName}" ${s.direction.toUpperCase()}`);
+                // Skip if already in dimension order to avoid duplicates
+                if (!validDimensions.includes(columnName)) {
+                    userOrderParts.push(`"${columnName}" ${s.direction.toUpperCase()}`);
+                }
             }
         }
 
-        return orderParts.length > 0 ? `ORDER BY ${orderParts.join(', ')}` : '';
+        // Combine: dimension order first, then user's secondary sort
+        const allOrderParts = [...dimensionOrderParts, ...userOrderParts];
+        return `ORDER BY ${allOrderParts.join(', ')}`
     }
 
     /**

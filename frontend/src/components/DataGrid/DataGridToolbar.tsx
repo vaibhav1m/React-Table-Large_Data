@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '../../hooks/useRedux';
-import { setSearchText, setComparison, toggleMetric } from '../../store/dataGridSlice';
+import { setComparison, toggleMetric } from '../../store/dataGridSlice';
+import { SearchBar } from './SearchBar';
 import './DataGridToolbar.css';
 
 interface DataGridToolbarProps {
@@ -19,26 +20,12 @@ export function DataGridToolbar({
     onDrillDownClick,
 }: DataGridToolbarProps) {
     const dispatch = useAppDispatch();
-    const { searchText, selectedMetrics, metadata, comparison } = useAppSelector(
+    const { selectedMetrics, metadata, comparison } = useAppSelector(
         (state) => state.dataGrid
     );
 
     const [showMetrics, setShowMetrics] = useState(false);
     const [showDatePicker, setShowDatePicker] = useState(false);
-    const [localSearch, setLocalSearch] = useState(searchText);
-
-    // Debounced search
-    const handleSearchChange = useCallback(
-        (value: string) => {
-            setLocalSearch(value);
-            // Debounce the actual search
-            const timer = setTimeout(() => {
-                dispatch(setSearchText(value));
-            }, 300);
-            return () => clearTimeout(timer);
-        },
-        [dispatch]
-    );
 
     const handleMetricToggle = useCallback(
         (metric: string) => {
@@ -79,16 +66,8 @@ export function DataGridToolbar({
             <div className="toolbar-left">
                 <h2 className="toolbar-title">DETAILS SUMMARY OF SALES METRICS</h2>
 
-                <div className="search-box">
-                    <input
-                        type="text"
-                        placeholder="Search by Category, Sub-Category & Product Name"
-                        value={localSearch}
-                        onChange={(e) => handleSearchChange(e.target.value)}
-                        className="search-input"
-                    />
-                    <span className="search-icon">🔍</span>
-                </div>
+                {/* Database-backed Search with Autocomplete */}
+                <SearchBar />
             </div>
 
             <div className="toolbar-right">

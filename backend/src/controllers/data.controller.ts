@@ -96,7 +96,7 @@ router.post('/query-raw', async (req: Request, res: Response) => {
 
         // Set defaults
         request.offset = request.offset ?? 0;
-        request.limit = Math.min(request.limit ?? 100, 1000); // Allow larger batches for raw format
+        request.limit = Math.min(request.limit ?? 100, 100000); // Allow loading all data for DuckDB initialization
         request.filters = request.filters ?? [];
         request.sort = request.sort ?? [];
 
@@ -169,6 +169,98 @@ router.get('/filters/:column', async (req: Request, res: Response) => {
         console.error('[DataController] Filter values error:', error);
         return res.status(500).json({
             error: 'Failed to get filter values',
+            message: error instanceof Error ? error.message : 'Unknown error',
+        });
+    }
+});
+
+// =============================================================================
+// POST /api/data/search - Search across Category, SubCategory, SKU, ProductName
+// Returns matching results for autocomplete dropdown
+// =============================================================================
+router.post('/search', async (req: Request, res: Response) => {
+    const startTime = Date.now();
+
+    try {
+        const { query, columns, limit = 50 } = req.body as {
+            query: string;
+            columns?: string[];
+            limit?: number;
+        };
+
+        // Validate query
+        if (!query || query.trim().length < 2) {
+            return res.json({ results: [], queryTimeMs: 0 });
+        }
+
+        // Default search columns: category, sub_category, sku, product_name
+        const searchColumns = columns || ['category', 'sub_category', 'sku', 'product_name'];
+        const metadata = queryBuilderService.getMetadata();
+
+        // Filter to only valid dimension columns
+        const validColumns = searchColumns.filter(col =>
+            metadata.dimensions.some(d => d.name === col)
+        );
+
+        if (validColumns.length === 0) {
+            return res.json({ results: [], queryTimeMs: 0 });
+        }
+
+        // Build search query
+        const searchTerm = query.trim().replace(/'/g, "''").toLowerCase();
+        const fullTableName = metadata.tableName;
+        const perColumnLimit = Math.ceil(limit / validColumns.length);
+
+        // Build UNION query for each column - wrap in subqueries for valid Trino SQL
+        const unionQueries = validColumns.map(col => `
+            (SELECT DISTINCT '${col}' AS column_name, CAST("${col}" AS VARCHAR) AS value
+             FROM ${fullTableName}
+             WHERE LOWER(CAST("${col}" AS VARCHAR)) LIKE '%${searchTerm}%'
+             AND "${col}" IS NOT NULL
+             LIMIT ${perColumnLimit})
+        `);
+
+        const sql = `
+            SELECT column_name, value FROM (
+                ${unionQueries.join(' UNION ALL ')}
+            ) combined
+            ORDER BY 
+                CASE WHEN LOWER(value) LIKE '${searchTerm}%' THEN 0 ELSE 1 END,
+                LENGTH(value)
+            LIMIT ${limit}
+        `;
+
+        console.log('[DataController] Executing search query for:', searchTerm);
+
+        const result = await trinoService.query(sql);
+
+        // Group results by column
+        const groupedResults: Record<string, string[]> = {};
+        for (const row of result.data) {
+            const columnName = row.column_name as string;
+            const value = row.value as string;
+            if (!groupedResults[columnName]) {
+                groupedResults[columnName] = [];
+            }
+            groupedResults[columnName].push(value);
+        }
+
+        // Transform to flat results with metadata
+        const results = result.data.map(row => ({
+            column: row.column_name as string,
+            value: row.value as string,
+            label: `${row.value} (${(row.column_name as string).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())})`,
+        }));
+
+        return res.json({
+            results,
+            groupedResults,
+            queryTimeMs: Date.now() - startTime,
+        });
+    } catch (error) {
+        console.error('[DataController] Search error:', error);
+        return res.status(500).json({
+            error: 'Search failed',
             message: error instanceof Error ? error.message : 'Unknown error',
         });
     }
