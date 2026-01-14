@@ -1,8 +1,9 @@
 /* =============================================================================
-   VirtualTable CSS - Lightweight styling with CSS containment
+   VirtualTable CSS - Ultra-lightweight span-based styling
    ============================================================================= */
 
-.virtual-table-container {
+/* Container */
+.vtc {
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -12,37 +13,34 @@
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     overflow: hidden;
     contain: layout style;
-    /* Create stacking context for proper z-index layering */
     isolation: isolate;
 }
 
 /* =============================================================================
-   Header Wrapper - Clips horizontal overflow, syncs with body scroll
+   Header
    ============================================================================= */
 
-.virtual-header-wrapper {
+.vhw {
+    display: block;
     height: 48px;
     overflow: hidden;
     flex-shrink: 0;
     background: linear-gradient(135deg, #6b46c1 0%, #553c9a 100%);
     border-bottom: 2px solid #4c3499;
-    /* Position sticky ensures header stays on top of scrolling body */
     position: sticky;
     top: 0;
     z-index: 100;
-    /* Solid background prevents content showing through */
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
-.virtual-header {
+.vh {
     display: flex;
     height: 48px;
-    flex-shrink: 0;
     will-change: transform;
 }
 
-.virtual-header-cell {
-    display: flex;
+.vhc {
+    display: inline-flex;
     align-items: center;
     justify-content: space-between;
     padding: 0 12px;
@@ -52,86 +50,81 @@
     cursor: pointer;
     user-select: none;
     border-right: 1px solid rgba(255, 255, 255, 0.2);
-    transition: background-color 0.15s;
     flex-shrink: 0;
     box-sizing: border-box;
+    transition: background 0.15s;
 }
 
-.virtual-header-cell:hover {
+.vhc:hover {
     background: rgba(255, 255, 255, 0.1);
 }
 
-.virtual-header-cell.sorted {
+.vhc.s {
     background: rgba(255, 255, 255, 0.15);
 }
 
-.virtual-header-cell.dimension {
+.vhc.d {
     background: rgba(0, 0, 0, 0.1);
 }
 
-.virtual-header-cell .header-label {
+.hl {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
 }
 
-.virtual-header-cell .sort-indicator {
+.si {
     font-size: 10px;
     margin-left: 6px;
     opacity: 0.9;
-    flex-shrink: 0;
 }
 
 /* =============================================================================
-   Body - Scrolls both horizontally and vertically
+   Body
    ============================================================================= */
 
-.virtual-table-body {
+.vtb {
     flex: 1;
     overflow: auto;
     position: relative;
-    /* Create isolated stacking context */
     isolation: isolate;
     z-index: 1;
-    /* Ensure content is clipped at boundaries */
     contain: strict;
 }
 
 /* =============================================================================
-   Rows
+   Rows - span-based
    ============================================================================= */
 
-.virtual-rows {
+.vrows {
     contain: layout style;
 }
 
-.virtual-row {
+/* this to remove the row border */
+.vrow {
     display: flex;
-    position: relative;
-    border-bottom: 1px solid #e2e8f0;
+    /* border-bottom: 1px solid #e2e8f0; */
     background: #fff;
     contain: layout style paint;
     content-visibility: auto;
     box-sizing: border-box;
-    min-height: 40px;
-    /* Ensure minimum consistent height */
 }
 
-.virtual-row:nth-child(even) {
+.vrow:nth-child(even) {
     background: #fafbfc;
 }
 
-.virtual-row:hover {
+.vrow:hover {
     background: #f0f4f8;
 }
 
 /* =============================================================================
-   Cells - Fixed width, text truncation with ellipsis
+   Cells - span-based, minimal DOM
    ============================================================================= */
 
-.virtual-cell {
-    display: flex;
+.vc {
+    display: inline-flex;
     align-items: center;
     padding: 0 12px;
     font-size: 13px;
@@ -139,97 +132,80 @@
     flex-shrink: 0;
     box-sizing: border-box;
     overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
     height: 40px;
-    /* Fixed height for consistency */
     line-height: 40px;
 }
 
-.virtual-cell .cell-content {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    width: 100%;
-    line-height: 1.4;
-}
-
-/* Dimension columns - subtle purple tint */
-.virtual-cell.dimension {
+/* Dimension = d */
+.vc.d {
     background: #faf5ff;
     color: #553c9a;
     font-weight: 500;
     border-right: 1px solid #e9d8fd;
 }
 
-.virtual-cell.metric {
+/* Metric = m */
+.vc.m {
     color: #1a202c;
-    background: inherit;
-    /* Use row background */
 }
 
-.virtual-cell.number {
+/* Number = n */
+.vc.n {
     justify-content: flex-end;
-    font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+    font-family: 'SF Mono', Monaco, Consolas, monospace;
     font-size: 12px;
-}
-
-.virtual-cell.number .cell-content {
     text-align: right;
 }
 
-/* Grouped column cells - for category grouping (Power BI merged cell style) */
-.virtual-cell.grouped {
+/* Grouped = g (cells without text, just background) */
+.vc.g {
     background: linear-gradient(to bottom, #faf7ff 0%, #f8f5ff 100%);
     border-right: 1px solid #e9d8fd;
-    /* Remove internal horizontal borders for merged look */
-    border-bottom: none !important;
-    transition: background-color 0.15s ease;
+    border-bottom: none;
 }
 
-/* First row of a group - visual marker with top border */
-.virtual-cell.grouped.group-start {
+/* Group start = gs */
+/* .vc.gs {
     border-top: 2px solid #c4b5fd;
+} */
+
+/* Group end = ge */
+.vc.ge {
+    border-bottom: 2px solid #c4b5fd;
 }
 
-/* Last row of a group - bottom border */
-.virtual-cell.grouped.group-end {
-    border-bottom: 2px solid #c4b5fd !important;
-}
+/* =============================================================================
+   Sticky Group Labels - Power BI / Excel style freeze pane behavior
+   ============================================================================= */
 
-/* Cell that shows the floating label */
-.virtual-cell.grouped.show-label {
-    background: linear-gradient(135deg, #f3e8ff 0%, #ede9fe 100%);
-}
-
-/* Sticky group value styling with smooth animation */
-.virtual-cell.grouped .sticky-group-value {
+.sticky-lbl {
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    font-size: 13px;
     font-weight: 600;
     color: #553c9a;
-    animation: labelFadeIn 0.2s ease;
-}
-
-/* Fade-in animation for labels */
-@keyframes labelFadeIn {
-    from {
-        opacity: 0.5;
-        transform: translateY(-2px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-/* When grouped cell has no label showing - unified merged appearance */
-.virtual-cell.grouped:not(.show-label) {
-    background: #faf7ff;
+    /* Solid opaque background to prevent content bleeding through */
+    background: #f3e8ff;
+    border-right: 1px solid #e9d8fd;
+    border-bottom: 1px solid #c4b5fd;
+    box-sizing: border-box;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    box-shadow: 0 2px 4px rgba(107, 70, 193, 0.15);
+    /* Smooth transition when moving */
+    will-change: top;
 }
 
 /* =============================================================================
    Status Bar
    ============================================================================= */
 
-.virtual-table-status {
+.vts {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -238,16 +214,15 @@
     border-top: 1px solid #e2e8f0;
     font-size: 12px;
     color: #718096;
-    flex-shrink: 0;
     height: 36px;
     box-sizing: border-box;
 }
 
 /* =============================================================================
-   Loading & Empty States
+   Loading States
    ============================================================================= */
 
-.loading-overlay {
+.lov {
     position: absolute;
     top: 0;
     left: 0;
@@ -260,7 +235,8 @@
     z-index: 100;
 }
 
-.loading-spinner {
+.spin {
+    display: inline-block;
     width: 40px;
     height: 40px;
     border: 3px solid #e2e8f0;
@@ -269,13 +245,20 @@
     animation: spin 0.8s linear infinite;
 }
 
+.spin.sm {
+    width: 20px;
+    height: 20px;
+    border-width: 2px;
+    margin-right: 8px;
+}
+
 @keyframes spin {
     to {
         transform: rotate(360deg);
     }
 }
 
-.empty-state {
+.emt {
     position: absolute;
     top: 50%;
     left: 50%;
@@ -284,74 +267,48 @@
     font-size: 16px;
 }
 
-/* =============================================================================
-   Load More Indicator
-   ============================================================================= */
-
-.load-more-indicator {
+.lmi {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 12px;
+    height: 60px;
     background: linear-gradient(to bottom, transparent, rgba(107, 70, 193, 0.15));
     color: #6b46c1;
     font-size: 13px;
     font-weight: 500;
-    animation: fadeInUp 0.3s ease-out;
-}
-
-@keyframes fadeInUp {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-.loading-spinner.small {
-    width: 20px;
-    height: 20px;
-    border-width: 2px;
 }
 
 /* =============================================================================
-   Scrollbar Styling
+   Scrollbar
    ============================================================================= */
 
-.virtual-table-body::-webkit-scrollbar {
+.vtb::-webkit-scrollbar {
     width: 10px;
     height: 10px;
 }
 
-.virtual-table-body::-webkit-scrollbar-track {
+.vtb::-webkit-scrollbar-track {
     background: #f1f5f9;
 }
 
-.virtual-table-body::-webkit-scrollbar-thumb {
+.vtb::-webkit-scrollbar-thumb {
     background: #cbd5e0;
     border-radius: 5px;
 }
 
-.virtual-table-body::-webkit-scrollbar-thumb:hover {
+.vtb::-webkit-scrollbar-thumb:hover {
     background: #a0aec0;
 }
 
-.virtual-table-body::-webkit-scrollbar-corner {
+.vtb::-webkit-scrollbar-corner {
     background: #f1f5f9;
 }
 
-/* =============================================================================
-   Responsive
-   ============================================================================= */
-
+/* Responsive */
 @media (max-width: 768px) {
 
-    .virtual-header-cell,
-    .virtual-cell {
+    .vhc,
+    .vc {
         padding: 0 8px;
         font-size: 12px;
     }

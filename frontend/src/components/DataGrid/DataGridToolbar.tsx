@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useAppDispatch, useAppSelector } from '../../hooks/useRedux';
-import { setComparison, toggleMetric } from '../../store/dataGridSlice';
+import { setComparison, toggleMetric, setSelectedMetrics } from '../../store/dataGridSlice';
 import { SearchBar } from './SearchBar';
 import './DataGridToolbar.css';
 
@@ -33,6 +33,18 @@ export function DataGridToolbar({
         },
         [dispatch]
     );
+
+    const handleSelectAllMetrics = useCallback(() => {
+        if (!metadata) return;
+        const allMetricNames = metadata.metrics.map(m => m.name);
+        if (selectedMetrics.length === allMetricNames.length) {
+            // Deselect all - keep at least one metric
+            dispatch(setSelectedMetrics([allMetricNames[0]]));
+        } else {
+            // Select all
+            dispatch(setSelectedMetrics(allMetricNames));
+        }
+    }, [dispatch, metadata, selectedMetrics.length]);
 
     const handleComparisonToggle = useCallback(() => {
         if (comparison) {
@@ -177,6 +189,16 @@ export function DataGridToolbar({
                     </button>
                     {showMetrics && (
                         <div className="dropdown-menu metrics-dropdown">
+                            {/* Select All option */}
+                            <label className="dropdown-item select-all">
+                                <input
+                                    type="checkbox"
+                                    checked={metadata ? selectedMetrics.length === metadata.metrics.length : false}
+                                    onChange={handleSelectAllMetrics}
+                                />
+                                Select All
+                            </label>
+                            <div className="dropdown-divider" />
                             {metadata?.metrics.map((metric) => (
                                 <label key={metric.name} className="dropdown-item">
                                     <input

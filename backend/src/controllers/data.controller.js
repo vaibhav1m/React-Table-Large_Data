@@ -1,21 +1,17 @@
-import { Request, Response, Router } from 'express';
-import { trinoService } from '../services/trino.service';
-import { queryBuilderService } from '../services/query-builder.service';
-import { cacheService } from '../services/cache.service';
-import { QueryRequest, QueryResponse, ColumnarQueryResponse } from '../types/data.types';
+const express = require('express');
+const { trinoService } = require('../services/trino.service');
+const { queryBuilderService } = require('../services/query-builder.service');
+const { cacheService } = require('../services/cache.service');
 
-const router = Router();
+const router = express.Router();
 
-// =============================================================================
 // POST /api/data/query - Main data query endpoint (legacy object format)
-// =============================================================================
-router.post('/query', async (req: Request, res: Response) => {
+router.post('/query', async (req, res) => {
     const startTime = Date.now();
 
     try {
-        const request: QueryRequest = req.body;
+        const request = req.body;
 
-        // Validate request
         if (!request.dimensions || request.dimensions.length === 0) {
             return res.status(400).json({ error: 'dimensions array is required' });
         }
@@ -23,70 +19,56 @@ router.post('/query', async (req: Request, res: Response) => {
             return res.status(400).json({ error: 'metrics array is required' });
         }
 
-        // Set defaults
         request.offset = request.offset ?? 0;
-        request.limit = Math.min(request.limit ?? 50, 500); // Max 500 rows per request
+        request.limit = Math.min(request.limit ?? 50, 500);
         request.filters = request.filters ?? [];
         request.sort = request.sort ?? [];
 
-        // Check cache
-        const cached = cacheService.get<Record<string, unknown>>(request);
+        const cached = cacheService.get(request);
         if (cached) {
-            const response: QueryResponse = {
+            return res.json({
                 data: cached.data,
                 totalRows: cached.totalRows,
                 queryTimeMs: Date.now() - startTime,
                 cached: true,
-            };
-            return res.json(response);
+            });
         }
 
-        // Build SQL queries
         const metadata = queryBuilderService.getMetadata();
-        const fullTableName = metadata.tableName;
-        const { sql, countSql } = queryBuilderService.buildQuery(request, fullTableName);
+        const { sql, countSql } = queryBuilderService.buildQuery(request, metadata.tableName);
 
         console.log('[DataController] Executing query:', sql.substring(0, 200) + '...');
 
-        // Execute queries in parallel
         const [dataResult, countResult] = await Promise.all([
             trinoService.query(sql),
             trinoService.query(countSql),
         ]);
 
-        const totalRows = countResult.data[0]?.total_count as number ?? 0;
-
-        // Cache the result
+        const totalRows = countResult.data[0]?.total_count ?? 0;
         cacheService.set(request, dataResult.data, totalRows);
 
-        const response: QueryResponse = {
+        return res.json({
             data: dataResult.data,
             totalRows,
             queryTimeMs: Date.now() - startTime,
             cached: false,
-        };
-
-        return res.json(response);
+        });
     } catch (error) {
         console.error('[DataController] Query error:', error);
         return res.status(500).json({
             error: 'Query execution failed',
-            message: error instanceof Error ? error.message : 'Unknown error',
+            message: error.message || 'Unknown error',
         });
     }
 });
 
-// =============================================================================
 // POST /api/data/query-raw - Optimized columnar format endpoint
-// Returns columns once + data as array of arrays (60% smaller, faster parsing)
-// =============================================================================
-router.post('/query-raw', async (req: Request, res: Response) => {
+router.post('/query-raw', async (req, res) => {
     const startTime = Date.now();
 
     try {
-        const request: QueryRequest = req.body;
+        const request = req.body;
 
-        // Validate request
         if (!request.dimensions || request.dimensions.length === 0) {
             return res.status(400).json({ error: 'dimensions array is required' });
         }
@@ -94,20 +76,16 @@ router.post('/query-raw', async (req: Request, res: Response) => {
             return res.status(400).json({ error: 'metrics array is required' });
         }
 
-        // Set defaults
         request.offset = request.offset ?? 0;
-        request.limit = Math.min(request.limit ?? 100, 100000); // Allow loading all data for DuckDB initialization
+        request.limit = Math.min(request.limit ?? 100, 100000);
         request.filters = request.filters ?? [];
         request.sort = request.sort ?? [];
 
-        // Build SQL queries
         const metadata = queryBuilderService.getMetadata();
-        const fullTableName = metadata.tableName;
-        const { sql, countSql } = queryBuilderService.buildQuery(request, fullTableName);
+        const { sql, countSql } = queryBuilderService.buildQuery(request, metadata.tableName);
 
         console.log('[DataController] Executing raw query:', sql.substring(0, 200) + '...');
 
-        // Execute queries in parallel using raw format
         const [dataResult, countResult] = await Promise.all([
             trinoService.queryRaw(sql),
             trinoService.queryRaw(countSql),
@@ -115,29 +93,25 @@ router.post('/query-raw', async (req: Request, res: Response) => {
 
         const totalRows = Number(countResult.data[0]?.[0]) || 0;
 
-        const response: ColumnarQueryResponse = {
+        return res.json({
             columns: dataResult.columns,
             columnTypes: dataResult.columnTypes,
             data: dataResult.data,
             totalRows,
             queryTimeMs: Date.now() - startTime,
             cached: false,
-        };
-
-        return res.json(response);
+        });
     } catch (error) {
         console.error('[DataController] Raw query error:', error);
         return res.status(500).json({
             error: 'Query execution failed',
-            message: error instanceof Error ? error.message : 'Unknown error',
+            message: error.message || 'Unknown error',
         });
     }
 });
 
-// =============================================================================
-// GET /api/data/metadata - Get table metadata (columns, types)
-// =============================================================================
-router.get('/metadata', (_req: Request, res: Response) => {
+// GET /api/data/metadata
+router.get('/metadata', (_req, res) => {
     try {
         const metadata = queryBuilderService.getMetadata();
         return res.json(metadata);
@@ -145,18 +119,16 @@ router.get('/metadata', (_req: Request, res: Response) => {
         console.error('[DataController] Metadata error:', error);
         return res.status(500).json({
             error: 'Failed to get metadata',
-            message: error instanceof Error ? error.message : 'Unknown error',
+            message: error.message || 'Unknown error',
         });
     }
 });
 
-// =============================================================================
-// GET /api/data/filters/:column - Get distinct values for filter dropdown
-// =============================================================================
-router.get('/filters/:column', async (req: Request, res: Response) => {
+// GET /api/data/filters/:column
+router.get('/filters/:column', async (req, res) => {
     try {
         const { column } = req.params;
-        const limit = parseInt(req.query.limit as string, 10) || 1000;
+        const limit = parseInt(req.query.limit, 10) || 1000;
 
         const fullTableName = queryBuilderService.getMetadata().tableName;
         const sql = queryBuilderService.buildDistinctValuesQuery(column, fullTableName, limit);
@@ -169,35 +141,25 @@ router.get('/filters/:column', async (req: Request, res: Response) => {
         console.error('[DataController] Filter values error:', error);
         return res.status(500).json({
             error: 'Failed to get filter values',
-            message: error instanceof Error ? error.message : 'Unknown error',
+            message: error.message || 'Unknown error',
         });
     }
 });
 
-// =============================================================================
-// POST /api/data/search - Search across Category, SubCategory, SKU, ProductName
-// Returns matching results for autocomplete dropdown
-// =============================================================================
-router.post('/search', async (req: Request, res: Response) => {
+// POST /api/data/search
+router.post('/search', async (req, res) => {
     const startTime = Date.now();
 
     try {
-        const { query, columns, limit = 50 } = req.body as {
-            query: string;
-            columns?: string[];
-            limit?: number;
-        };
+        const { query, columns, limit = 50 } = req.body;
 
-        // Validate query
         if (!query || query.trim().length < 2) {
             return res.json({ results: [], queryTimeMs: 0 });
         }
 
-        // Default search columns: category, sub_category, sku, product_name
         const searchColumns = columns || ['category', 'sub_category', 'sku', 'product_name'];
         const metadata = queryBuilderService.getMetadata();
 
-        // Filter to only valid dimension columns
         const validColumns = searchColumns.filter(col =>
             metadata.dimensions.some(d => d.name === col)
         );
@@ -206,12 +168,10 @@ router.post('/search', async (req: Request, res: Response) => {
             return res.json({ results: [], queryTimeMs: 0 });
         }
 
-        // Build search query
         const searchTerm = query.trim().replace(/'/g, "''").toLowerCase();
         const fullTableName = metadata.tableName;
         const perColumnLimit = Math.ceil(limit / validColumns.length);
 
-        // Build UNION query for each column - wrap in subqueries for valid Trino SQL
         const unionQueries = validColumns.map(col => `
             (SELECT DISTINCT '${col}' AS column_name, CAST("${col}" AS VARCHAR) AS value
              FROM ${fullTableName}
@@ -234,22 +194,19 @@ router.post('/search', async (req: Request, res: Response) => {
 
         const result = await trinoService.query(sql);
 
-        // Group results by column
-        const groupedResults: Record<string, string[]> = {};
+        const groupedResults = {};
         for (const row of result.data) {
-            const columnName = row.column_name as string;
-            const value = row.value as string;
+            const columnName = row.column_name;
             if (!groupedResults[columnName]) {
                 groupedResults[columnName] = [];
             }
-            groupedResults[columnName].push(value);
+            groupedResults[columnName].push(row.value);
         }
 
-        // Transform to flat results with metadata
         const results = result.data.map(row => ({
-            column: row.column_name as string,
-            value: row.value as string,
-            label: `${row.value} (${(row.column_name as string).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())})`,
+            column: row.column_name,
+            value: row.value,
+            label: `${row.value} (${row.column_name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())})`,
         }));
 
         return res.json({
@@ -261,25 +218,21 @@ router.post('/search', async (req: Request, res: Response) => {
         console.error('[DataController] Search error:', error);
         return res.status(500).json({
             error: 'Search failed',
-            message: error instanceof Error ? error.message : 'Unknown error',
+            message: error.message || 'Unknown error',
         });
     }
 });
 
-// =============================================================================
-// GET /api/data/cache/stats - Get cache statistics
-// =============================================================================
-router.get('/cache/stats', (_req: Request, res: Response) => {
+// GET /api/data/cache/stats
+router.get('/cache/stats', (_req, res) => {
     const stats = cacheService.getStats();
     return res.json(stats);
 });
 
-// =============================================================================
-// POST /api/data/cache/clear - Clear cache
-// =============================================================================
-router.post('/cache/clear', (_req: Request, res: Response) => {
+// POST /api/data/cache/clear
+router.post('/cache/clear', (_req, res) => {
     cacheService.clear();
     return res.json({ success: true, message: 'Cache cleared' });
 });
 
-export default router;
+module.exports = router;

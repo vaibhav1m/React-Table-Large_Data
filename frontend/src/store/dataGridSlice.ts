@@ -39,15 +39,19 @@ interface PrefetchState extends DataGridState {
     // Query state
     currentQueryId: number;         // For cancelling stale queries
     needsDataRefresh: boolean;      // Flag to trigger data refresh
+
+    // Brand filter
+    selectedBrand: string | null;   // null means "All"
 }
 
 const initialState: PrefetchState = {
-    selectedDimensions: ['master_brand_id'],
+    selectedDimensions: ['category'],  // Default dimension (master_brand_id is now a top-level filter)
     selectedMetrics: ['ads_spend', 'ads_sale', 'gross_sale'],
     filters: [],
     sort: [{ column: 'ads_spend', direction: 'desc' }],
     searchText: '',
     comparison: null,
+    selectedBrand: null,  // null means "All"
     isLoading: false,
     error: null,
     metadata: null,
@@ -112,6 +116,7 @@ function mergeRanges(ranges: { start: number; end: number }[]): { start: number;
 
 /**
  * Filter data to show only selected columns
+ * When comparison mode is active, includes _curr, _comp, _diff, _diff_pct columns
  */
 function filterVisibleData(
     allColumns: string[],
@@ -123,8 +128,25 @@ function filterVisibleData(
     visibleData: (string | number | null)[][];
     columnIndices: number[];
 } {
-    // Build list of columns to show: dimensions first, then selected metrics
-    const visibleColumns = [...selectedDimensions, ...selectedMetrics];
+    // Build list of columns to show: dimensions first
+    const visibleColumns: string[] = [...selectedDimensions];
+
+    // For each selected metric, add the base column or comparison columns if they exist
+    for (const metric of selectedMetrics) {
+        // Check if comparison columns exist for this metric
+        const currCol = `${metric}_curr`;
+        const compCol = `${metric}_comp`;
+        const diffCol = `${metric}_diff`;
+        const diffPctCol = `${metric}_diff_pct`;
+
+        if (allColumns.includes(currCol)) {
+            // Comparison mode - add all comparison columns
+            visibleColumns.push(currCol, compCol, diffCol, diffPctCol);
+        } else if (allColumns.includes(metric)) {
+            // Normal mode - just add the metric
+            visibleColumns.push(metric);
+        }
+    }
 
     // Find indices of visible columns in allColumns
     const columnIndices = visibleColumns.map(col => allColumns.indexOf(col)).filter(idx => idx !== -1);
@@ -344,6 +366,30 @@ const dataGridSlice = createSlice({
         },
         setComparison: (state, action: PayloadAction<ComparisonConfig | null>) => {
             state.comparison = action.payload;
+            // Trigger data refresh when comparison changes
+            state.allData = [];
+            state.loadedRanges = [];
+            state.needsDataRefresh = true;
+        },
+        setSelectedBrand: (state, action: PayloadAction<string | null>) => {
+            state.selectedBrand = action.payload;
+            // Apply brand filter
+            if (action.payload === null) {
+                // Remove brand filter (show All)
+                state.filters = state.filters.filter(f => f.column !== 'master_brand_id');
+            } else {
+                // Add/update brand filter
+                const existingIdx = state.filters.findIndex(f => f.column === 'master_brand_id');
+                const brandFilter: Filter = { column: 'master_brand_id', operator: 'eq', value: action.payload };
+                if (existingIdx >= 0) {
+                    state.filters[existingIdx] = brandFilter;
+                } else {
+                    state.filters.push(brandFilter);
+                }
+            }
+            state.allData = [];
+            state.loadedRanges = [];
+            state.needsDataRefresh = true;
         },
         clearError: (state) => {
             state.error = null;
@@ -515,6 +561,7 @@ export const {
     setSort,
     setSearchText,
     setComparison,
+    setSelectedBrand,
     clearError,
     updateScrollPosition,
     markRefreshComplete,

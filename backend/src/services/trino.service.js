@@ -1,25 +1,6 @@
-import { TrinoConfig } from '../types/data.types';
-
-// =============================================================================
 // Trino Client Service
-// =============================================================================
-
-interface TrinoResponse {
-    nextUri?: string;
-    columns?: Array<{ name: string; type: string }>;
-    data?: unknown[][];
-    error?: { message: string };
-}
-
-interface QueryResult {
-    columns: Array<{ name: string; type: string }>;
-    data: Record<string, unknown>[];
-}
 
 class TrinoService {
-    private config: TrinoConfig;
-    private baseUrl: string;
-
     constructor() {
         this.config = {
             host: process.env.TRINO_HOST || 'localhost',
@@ -32,14 +13,10 @@ class TrinoService {
         this.baseUrl = `http://${this.config.host}:${this.config.port}`;
     }
 
-    /**
-     * Execute a SQL query against Trino
-     */
-    async query(sql: string): Promise<QueryResult> {
+    async query(sql) {
         const startTime = Date.now();
 
         try {
-            // Initial query submission
             const response = await fetch(`${this.baseUrl}/v1/statement`, {
                 method: 'POST',
                 headers: {
@@ -56,45 +33,38 @@ class TrinoService {
                 throw new Error(`Trino query submission failed: ${response.status} - ${errorText}`);
             }
 
-            let result: TrinoResponse = await response.json() as TrinoResponse;
+            let result = await response.json();
 
-            // Poll for results until query completes
-            const allData: Record<string, unknown>[] = [];
-            let columns: Array<{ name: string; type: string }> = [];
+            const allData = [];
+            let columns = [];
 
             while (result.nextUri) {
-                // Capture columns from first response that has them
                 if (result.columns && !columns.length) {
-                    columns = result.columns.map((col: { name: string; type: string }) => ({
+                    columns = result.columns.map(col => ({
                         name: col.name,
                         type: col.type,
                     }));
                 }
 
-                // Collect data if present
                 if (result.data) {
                     const rows = this.transformRows(result.data, columns);
                     allData.push(...rows);
                 }
 
-                // Poll next URI
-                await this.delay(100); // Small delay to avoid hammering
+                await this.delay(100);
                 const nextResponse = await fetch(result.nextUri, {
-                    headers: {
-                        'X-Trino-User': this.config.user,
-                    },
+                    headers: { 'X-Trino-User': this.config.user },
                 });
 
                 if (!nextResponse.ok) {
                     throw new Error(`Trino polling failed: ${nextResponse.status}`);
                 }
 
-                result = await nextResponse.json() as TrinoResponse;
+                result = await nextResponse.json();
             }
 
-            // Capture final batch of data
             if (result.columns && !columns.length) {
-                columns = result.columns.map((col: { name: string; type: string }) => ({
+                columns = result.columns.map(col => ({
                     name: col.name,
                     type: col.type,
                 }));
@@ -105,13 +75,11 @@ class TrinoService {
                 allData.push(...rows);
             }
 
-            // Check for errors
             if (result.error) {
                 throw new Error(`Trino query error: ${result.error.message}`);
             }
 
-            const queryTime = Date.now() - startTime;
-            console.log(`[Trino] Query completed in ${queryTime}ms, returned ${allData.length} rows`);
+            console.log(`[Trino] Query completed in ${Date.now() - startTime}ms, returned ${allData.length} rows`);
 
             return { columns, data: allData };
         } catch (error) {
@@ -120,15 +88,9 @@ class TrinoService {
         }
     }
 
-    /**
-     * Transform array-based rows to object-based rows
-     */
-    private transformRows(
-        data: unknown[][],
-        columns: Array<{ name: string; type: string }>
-    ): Record<string, unknown>[] {
+    transformRows(data, columns) {
         return data.map((row) => {
-            const obj: Record<string, unknown> = {};
+            const obj = {};
             columns.forEach((col, index) => {
                 obj[col.name] = row[index];
             });
@@ -136,24 +98,15 @@ class TrinoService {
         });
     }
 
-    /**
-     * Helper delay function
-     */
-    private delay(ms: number): Promise<void> {
+    delay(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
-    /**
-     * Get the full table name with catalog and schema
-     */
-    getFullTableName(tableName: string): string {
+    getFullTableName(tableName) {
         return `${this.config.catalog}.${this.config.schema}.${tableName}`;
     }
 
-    /**
-     * Test connection to Trino
-     */
-    async testConnection(): Promise<boolean> {
+    async testConnection() {
         try {
             await this.query('SELECT 1');
             console.log('[Trino] Connection test successful');
@@ -164,16 +117,12 @@ class TrinoService {
         }
     }
 
-    /**
-     * Get table schema (columns and types) from Trino
-     */
-    async getTableSchema(tableName: string): Promise<Array<{ name: string; type: string }>> {
+    async getTableSchema(tableName) {
         const sql = `DESCRIBE ${tableName}`;
         console.log(`[Trino] Fetching schema for table: ${tableName}`);
 
         const result = await this.query(sql);
 
-        // DESCRIBE returns rows with column_name and data_type
         const columns = result.data.map((row) => ({
             name: String(row.Column || row.column_name || row['Column']),
             type: String(row.Type || row.data_type || row['Type']).toLowerCase(),
@@ -183,19 +132,10 @@ class TrinoService {
         return columns;
     }
 
-    /**
-     * Execute query and return raw columnar format (no object transformation)
-     * Much more efficient - avoids O(n*m) object creation
-     */
-    async queryRaw(sql: string): Promise<{
-        columns: string[];
-        columnTypes: string[];
-        data: (string | number | null)[][];
-    }> {
+    async queryRaw(sql) {
         const startTime = Date.now();
 
         try {
-            // Initial request
             const response = await fetch(`${this.baseUrl}/v1/statement`, {
                 method: 'POST',
                 headers: {
@@ -210,60 +150,52 @@ class TrinoService {
                 throw new Error(`Trino request failed: ${response.status} ${response.statusText}`);
             }
 
-            let result = await response.json() as TrinoResponse;
+            let result = await response.json();
 
-            const columnNames: string[] = [];
-            const columnTypes: string[] = [];
-            const allData: (string | number | null)[][] = [];
+            const columnNames = [];
+            const columnTypes = [];
+            const allData = [];
 
-            // Poll until query completes
             while (result.nextUri) {
-                // Capture column info
                 if (result.columns && !columnNames.length) {
-                    result.columns.forEach((col: { name: string; type: string }) => {
+                    result.columns.forEach(col => {
                         columnNames.push(col.name);
                         columnTypes.push(col.type);
                     });
                 }
 
-                // Collect raw data (no transformation)
                 if (result.data) {
-                    allData.push(...(result.data as (string | number | null)[][]));
+                    allData.push(...result.data);
                 }
 
-                // Poll next page
                 await this.delay(100);
                 const nextResponse = await fetch(result.nextUri, {
-                    headers: {
-                        'X-Trino-User': this.config.user,
-                    },
+                    headers: { 'X-Trino-User': this.config.user },
                 });
 
                 if (!nextResponse.ok) {
                     throw new Error(`Trino polling failed: ${nextResponse.status}`);
                 }
 
-                result = await nextResponse.json() as TrinoResponse;
+                result = await nextResponse.json();
             }
 
-            // Capture final batch
             if (result.columns && !columnNames.length) {
-                result.columns.forEach((col: { name: string; type: string }) => {
+                result.columns.forEach(col => {
                     columnNames.push(col.name);
                     columnTypes.push(col.type);
                 });
             }
 
             if (result.data) {
-                allData.push(...(result.data as (string | number | null)[][]));
+                allData.push(...result.data);
             }
 
             if (result.error) {
                 throw new Error(`Trino query error: ${result.error.message}`);
             }
 
-            const queryTime = Date.now() - startTime;
-            console.log(`[Trino] Raw query completed in ${queryTime}ms, returned ${allData.length} rows`);
+            console.log(`[Trino] Raw query completed in ${Date.now() - startTime}ms, returned ${allData.length} rows`);
 
             return { columns: columnNames, columnTypes, data: allData };
         } catch (error) {
@@ -273,5 +205,5 @@ class TrinoService {
     }
 }
 
-// Export singleton instance
-export const trinoService = new TrinoService();
+const trinoService = new TrinoService();
+module.exports = { trinoService };

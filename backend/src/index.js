@@ -1,32 +1,29 @@
-// Load environment variables FIRST (before any other imports)
-import dotenv from 'dotenv';
-dotenv.config();
+// Load environment variables FIRST
+require('dotenv').config();
 
-import express from 'express';
-import cors from 'cors';
-import compression from 'compression';
-import dataController from './controllers/data.controller';
-import { trinoService } from './services/trino.service';
-import { queryBuilderService } from './services/query-builder.service';
+const express = require('express');
+const cors = require('cors');
+const compression = require('compression');
+const dataController = require('./controllers/data.controller');
+const { trinoService } = require('./services/trino.service');
+const { queryBuilderService } = require('./services/query-builder.service');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware - Compression first for best performance
-app.use(compression()); // Gzip compression - reduces response size by 70-80%
-
+// Middleware
+app.use(compression());
 app.use(cors({
-    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:3000'], // Vite ports + CRA
+    origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:3000'],
     credentials: true,
 }));
 app.use(express.json({ limit: '10mb' }));
 
-// Request logging middleware
+// Request logging
 app.use((req, res, next) => {
     const start = Date.now();
     res.on('finish', () => {
-        const duration = Date.now() - start;
-        console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`);
+        console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - ${res.statusCode} (${Date.now() - start}ms)`);
     });
     next();
 });
@@ -39,8 +36,8 @@ app.get('/health', (_req, res) => {
 // API routes
 app.use('/api/data', dataController);
 
-// Error handling middleware
-app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+// Error handling
+app.use((err, _req, res, _next) => {
     console.error('[Server] Unhandled error:', err);
     res.status(500).json({
         error: 'Internal server error',
@@ -50,7 +47,6 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 
 // Start server
 async function startServer() {
-    // Test Trino connection
     console.log('[Server] Testing Trino connection...');
     const connected = await trinoService.testConnection();
 
@@ -59,7 +55,6 @@ async function startServer() {
         process.exit(1);
     }
 
-    // Initialize query builder with schema discovery
     console.log('[Server] Discovering table schema...');
     try {
         await queryBuilderService.initialize();

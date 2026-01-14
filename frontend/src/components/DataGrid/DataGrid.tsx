@@ -3,6 +3,7 @@ import { VirtualTable } from '../VirtualTable';
 import type { VirtualTableColumn } from '../VirtualTable';
 import { DataGridToolbar } from './DataGridToolbar';
 import { DrillDownSelector } from './DrillDownSelector';
+import { BrandFilter } from './BrandFilter';
 import { useAppDispatch, useAppSelector } from '../../hooks/useRedux';
 import {
     fetchMetadata,
@@ -93,11 +94,35 @@ export const DataGrid: React.FC = () => {
             const dimInfo = metadata.dimensions.find((d) => d.name === colName);
             const metricInfo = metadata.metrics.find((m) => m.name === colName);
 
+            // Handle comparison column names
+            let label = dimInfo?.label || metricInfo?.label || colName;
+            let isComparisonCol = false;
+
+            if (!dimInfo && !metricInfo) {
+                // Check if it's a comparison column
+                const suffixes = ['_curr', '_comp', '_diff', '_diff_pct'];
+                for (const suffix of suffixes) {
+                    if (colName.endsWith(suffix)) {
+                        const baseMetricName = colName.slice(0, -suffix.length);
+                        const baseMetric = metadata.metrics.find(m => m.name === baseMetricName);
+                        if (baseMetric) {
+                            isComparisonCol = true;
+                            const suffixLabel = suffix === '_curr' ? 'Current'
+                                : suffix === '_comp' ? 'Prior'
+                                    : suffix === '_diff' ? 'Diff'
+                                        : 'Diff %';
+                            label = `${baseMetric.label} (${suffixLabel})`;
+                        }
+                        break;
+                    }
+                }
+            }
+
             return {
                 name: colName,
-                label: dimInfo?.label || metricInfo?.label || colName,
+                label,
                 type: columnTypes[index] || 'varchar',
-                width: dimInfo ? 160 : 130,
+                width: dimInfo ? 160 : (isComparisonCol ? 120 : 130),
             };
         });
     }, [columns, columnTypes, metadata]);
@@ -158,6 +183,9 @@ export const DataGrid: React.FC = () => {
 
     return (
         <div className="data-grid-wrapper">
+            {/* Brand Filter at top */}
+            <BrandFilter />
+
             {/* Toolbar */}
             <DataGridToolbar
                 onDrillDownClick={() => setShowDrillDown(true)}

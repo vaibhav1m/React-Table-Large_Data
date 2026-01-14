@@ -23,7 +23,7 @@ export interface VirtualTableProps {
     onScroll?: (scrollTop: number, scrollLeft: number) => void;
     onSort?: (column: string, direction: 'asc' | 'desc') => void;
     onLoadMore?: () => void;
-    onScrollProgress?: (progress: number, endIndex: number) => void; // For prefetch triggering
+    onScrollProgress?: (progress: number, endIndex: number) => void;
     sortColumn?: string;
     sortDirection?: 'asc' | 'desc';
     isLoading?: boolean;
@@ -32,213 +32,166 @@ export interface VirtualTableProps {
 }
 
 // =============================================================================
-// Column Width Helper
+// Helpers
 // =============================================================================
 
-function getColumnWidth(col: VirtualTableColumn, index: number, dimensionCount: number): number {
-    if (col.width) return col.width;
-    return index < dimensionCount ? 180 : 130; // Wider dimensions for readability
-}
+const getColWidth = (col: VirtualTableColumn, i: number, dimCount: number): number =>
+    col.width || (i < dimCount ? 180 : 130);
 
-// =============================================================================
-// Format Utilities with Memoization
-// =============================================================================
+const fmtCache = new Map<string, string>();
 
-const formatCache = new Map<string, string>();
+const fmt = (v: string | number | null, t: string): string => {
+    if (v === null || v === undefined) return '-';
+    const k = `${t}:${v}`;
+    const cached = fmtCache.get(k);
+    if (cached) return cached;
 
-function formatValue(value: string | number | null, type: string): string {
-    if (value === null || value === undefined) return '-';
-
-    const cacheKey = `${type}:${value}`;
-    if (formatCache.has(cacheKey)) {
-        return formatCache.get(cacheKey)!;
-    }
-
-    let formatted: string;
-
-    if (typeof value === 'number') {
-        if (type.includes('double') || type.includes('currency') || type === 'currency') {
-            formatted = new Intl.NumberFormat('en-IN', {
-                style: 'currency',
-                currency: 'INR',
-                maximumFractionDigits: 0,
-            }).format(value);
-        } else {
-            formatted = new Intl.NumberFormat('en-IN').format(value);
-        }
+    let s: string;
+    if (typeof v === 'number') {
+        s = (t.includes('double') || t.includes('currency'))
+            ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(v)
+            : new Intl.NumberFormat('en-IN').format(v);
     } else {
-        formatted = String(value);
+        s = String(v);
     }
 
-    if (formatCache.size > 10000) {
-        formatCache.clear();
-    }
-    formatCache.set(cacheKey, formatted);
-
-    return formatted;
-}
+    if (fmtCache.size > 10000) fmtCache.clear();
+    fmtCache.set(k, s);
+    return s;
+};
 
 // =============================================================================
-// Virtual Row Component (Memoized)
+// Sticky Group Label - Floats at top of viewport within group bounds
 // =============================================================================
 
-interface VirtualRowProps {
-    rowIndex: number;
-    rowData: (string | number | null)[];
-    columns: VirtualTableColumn[];
-    style: React.CSSProperties;
-    dimensionCount: number;
-    getGroupInfo: (rowIndex: number, colIndex: number) => { value: string | number | null; startRow: number; rowCount: number } | null;
-    isGroupingColumn: (colIndex: number) => boolean;
-    totalWidth: number;
-    firstVisibleRowIndex: number; // The first visible row in the viewport
+interface StickyLabelProps {
+    value: string | number | null;
+    type: string;
+    colWidth: number;
+    colLeft: number;
+    groupStartY: number;  // Y position where group starts
+    groupEndY: number;    // Y position where group ends
+    scrollTop: number;    // Current scroll position
     rowHeight: number;
+    viewportHeight: number; // Actual viewport height
 }
 
-const VirtualRow = memo<VirtualRowProps>(({
-    rowIndex,
-    rowData,
-    columns,
-    style,
-    dimensionCount,
-    getGroupInfo,
-    isGroupingColumn,
-    totalWidth,
-    firstVisibleRowIndex,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    rowHeight: _rowHeight,
+const StickyLabel = memo<StickyLabelProps>(({
+    value, type, colWidth, colLeft, groupStartY, groupEndY, scrollTop, rowHeight, viewportHeight
 }) => {
+    // Calculate where the label should appear
+    // It should stick to the top of the viewport but:
+    // - Not go above the group start
+    // - Not go below the group end - rowHeight (so it's visible)
+
+    const minY = groupStartY;
+    const maxY = groupEndY - rowHeight;
+    const stickyY = Math.max(minY, Math.min(scrollTop, maxY));
+
+    // Don't show if the group is entirely above or below viewport
+    // Use actual viewport height instead of hardcoded value
+    if (groupEndY <= scrollTop || groupStartY >= scrollTop + viewportHeight) {
+        return null;
+    }
+
     return (
-        <div className="virtual-row" style={{ ...style, width: totalWidth, minWidth: totalWidth }}>
-            {columns.map((col, colIndex) => {
-                const colWidth = getColumnWidth(col, colIndex, dimensionCount);
-                const isDimension = colIndex < dimensionCount;
-                const isGrouped = isGroupingColumn(colIndex);
+        <span
+            className="sticky-lbl"
+            style={{
+                position: 'absolute',
+                top: stickyY,
+                // colLeft is relative to content, not viewport - no scroll adjustment needed
+                left: colLeft,
+                width: colWidth,
+                height: rowHeight,
+                zIndex: 60, // Higher z-index to ensure visibility above rows
+            }}
+        >
+            {fmt(value, type)}
+        </span>
+    );
+});
+StickyLabel.displayName = 'StickyLabel';
 
-                // Get group info for this cell
-                const groupInfo = isGrouped ? getGroupInfo(rowIndex, colIndex) : null;
+// =============================================================================
+// Row Component - Cells without text for grouped columns (labels float above)
+// =============================================================================
 
-                // For grouped columns, determine if THIS row should show the floating label
-                // Show label if: this row is the first visible row within this group
-                let showGroupLabel = false;
-                if (isGrouped && groupInfo) {
-                    const groupStartRow = groupInfo.startRow;
+interface RowProps {
+    idx: number;
+    row: (string | number | null)[];
+    cols: VirtualTableColumn[];
+    h: number;
+    dimCount: number;
+    getGrp: (r: number, c: number) => { value: string | number | null; startRow: number; rowCount: number } | null;
+    isGrpCol: (c: number) => boolean;
+    w: number;
+}
 
-                    // Show label on the first visible row of the group
-                    // If group starts above viewport, show on first visible row
-                    // Otherwise show on the actual group start row
-                    const effectiveFirstRow = Math.max(groupStartRow, firstVisibleRowIndex);
-                    showGroupLabel = rowIndex === effectiveFirstRow;
-                }
+const Row = memo<RowProps>(({ idx, row, cols, h, dimCount, getGrp, isGrpCol, w }) => (
+    <span className="vrow" style={{ height: h, width: w }}>
+        {cols.map((col, ci) => {
+            const cw = getColWidth(col, ci, dimCount);
+            const isDim = ci < dimCount;
+            const isGrp = isGrpCol(ci);
+            const grp = isGrp ? getGrp(idx, ci) : null;
+            const val = grp?.value ?? row[ci];
+            const isNum = typeof val === 'number';
+            const isFirst = grp ? idx === grp.startRow : true;
+            const isLast = grp ? idx === grp.startRow + grp.rowCount - 1 : true;
 
-                // For grouped columns, show the value from the group
-                const displayValue = groupInfo ? groupInfo.value : rowData[colIndex];
-                const isNumber = typeof displayValue === 'number';
+            return (
+                <span
+                    key={col.name}
+                    className={`vc${isDim ? ' d' : ' m'}${isNum ? ' n' : ''}${isGrp ? ' g' : ''}${isFirst ? ' gs' : ''}${isLast ? ' ge' : ''}`}
+                    style={{ width: cw }}
+                    title={String(val ?? '')}
+                >
+                    {/* For grouped columns, text is rendered by floating StickyLabel */}
+                    {!isGrp && fmt(val, col.type)}
+                </span>
+            );
+        })}
+    </span>
+));
+Row.displayName = 'Row';
 
-                // Check if this is the first row of a group
-                const isFirstInGroup = groupInfo ? rowIndex === groupInfo.startRow : true;
+// =============================================================================
+// Header Component
+// =============================================================================
 
-                // Check if this is the last row of a group
-                const isLastInGroup = groupInfo ? rowIndex === groupInfo.startRow + groupInfo.rowCount - 1 : true;
+interface HeaderProps {
+    cols: VirtualTableColumn[];
+    dimCount: number;
+    onSort?: (col: string, dir: 'asc' | 'desc') => void;
+    sortCol?: string;
+    sortDir?: 'asc' | 'desc';
+    w: number;
+    scrollX: number;
+}
 
+const Header = memo<HeaderProps>(({ cols, dimCount, onSort, sortCol, sortDir, w, scrollX }) => (
+    <span className="vhw">
+        <span className="vh" style={{ width: w, transform: `translateX(-${scrollX}px)` }}>
+            {cols.map((col, i) => {
+                const cw = getColWidth(col, i, dimCount);
+                const sorted = sortCol === col.name;
                 return (
-                    <div
+                    <span
                         key={col.name}
-                        className={`virtual-cell ${isDimension ? 'dimension' : 'metric'} ${isNumber ? 'number' : ''} ${isGrouped ? 'grouped' : ''} ${isFirstInGroup ? 'group-start' : ''} ${isLastInGroup ? 'group-end' : ''} ${showGroupLabel ? 'show-label' : ''}`}
-                        style={{
-                            width: colWidth,
-                            minWidth: colWidth,
-                            maxWidth: colWidth,
-                        }}
-                        title={String(displayValue ?? '')}
+                        className={`vhc${i < dimCount ? ' d' : ''}${sorted ? ' s' : ''}`}
+                        style={{ width: cw }}
+                        onClick={() => onSort?.(col.name, sortCol === col.name && sortDir === 'asc' ? 'desc' : 'asc')}
                     >
-                        {/* For grouped columns, show value only on the first visible row of the group */}
-                        {isGrouped && groupInfo ? (
-                            <span className={`cell-content ${showGroupLabel ? 'sticky-group-value' : 'hidden-label'}`}>
-                                {showGroupLabel ? formatValue(groupInfo.value, col.type) : ''}
-                            </span>
-                        ) : (
-                            <span className="cell-content">{formatValue(displayValue, col.type)}</span>
-                        )}
-                    </div>
+                        <span className="hl">{col.label}</span>
+                        {sorted && <span className="si">{sortDir === 'asc' ? '▲' : '▼'}</span>}
+                    </span>
                 );
             })}
-        </div>
-    );
-});
-
-VirtualRow.displayName = 'VirtualRow';
-
-// =============================================================================
-// Table Header Component
-// =============================================================================
-
-interface TableHeaderProps {
-    columns: VirtualTableColumn[];
-    dimensionCount: number;
-    onSort?: (column: string, direction: 'asc' | 'desc') => void;
-    sortColumn?: string;
-    sortDirection?: 'asc' | 'desc';
-    totalWidth: number;
-    scrollLeft: number;
-}
-
-const TableHeader = memo<TableHeaderProps>(({
-    columns,
-    dimensionCount,
-    onSort,
-    sortColumn,
-    sortDirection,
-    totalWidth,
-    scrollLeft,
-}) => {
-    const handleSort = (column: string) => {
-        if (!onSort) return;
-        const newDirection = sortColumn === column && sortDirection === 'asc' ? 'desc' : 'asc';
-        onSort(column, newDirection);
-    };
-
-    return (
-        <div className="virtual-header-wrapper">
-            <div
-                className="virtual-header"
-                style={{
-                    width: totalWidth,
-                    minWidth: totalWidth,
-                    transform: `translateX(-${scrollLeft}px)`,
-                }}
-            >
-                {columns.map((col, index) => {
-                    const isDimension = index < dimensionCount;
-                    const isSorted = sortColumn === col.name;
-                    const colWidth = getColumnWidth(col, index, dimensionCount);
-
-                    return (
-                        <div
-                            key={col.name}
-                            className={`virtual-header-cell ${isDimension ? 'dimension' : 'metric'} ${isSorted ? 'sorted' : ''}`}
-                            style={{
-                                width: colWidth,
-                                minWidth: colWidth,
-                                maxWidth: colWidth,
-                            }}
-                            onClick={() => handleSort(col.name)}
-                        >
-                            <span className="header-label">{col.label}</span>
-                            {isSorted && (
-                                <span className="sort-indicator">
-                                    {sortDirection === 'asc' ? '▲' : '▼'}
-                                </span>
-                            )}
-                        </div>
-                    );
-                })}
-            </div>
-        </div>
-    );
-});
-
-TableHeader.displayName = 'TableHeader';
+        </span>
+    </span>
+));
+Header.displayName = 'Header';
 
 // =============================================================================
 // Main VirtualTable Component
@@ -261,207 +214,165 @@ export const VirtualTable: React.FC<VirtualTableProps> = ({
     hasMoreData = true,
 }) => {
     const containerRef = useRef<HTMLDivElement>(null);
-    const bodyRef = useRef<HTMLDivElement>(null);
-    const [containerHeight, setContainerHeight] = useState(600);
-    const [scrollLeft, setScrollLeft] = useState(0);
-    const loadMoreTriggeredRef = useRef(false);
+    const [cHeight, setCHeight] = useState(600);
+    const [scrollX, setScrollX] = useState(0);
+    const [scrollY, setScrollY] = useState(0);
+    const loadTriggered = useRef(false);
 
-    // Observe container height
     useEffect(() => {
         if (!containerRef.current) return;
-
-        const resizeObserver = new ResizeObserver((entries) => {
-            for (const entry of entries) {
-                setContainerHeight(entry.contentRect.height);
-            }
-        });
-
-        resizeObserver.observe(containerRef.current);
-        return () => resizeObserver.disconnect();
+        const ro = new ResizeObserver(es => setCHeight(es[0].contentRect.height));
+        ro.observe(containerRef.current);
+        return () => ro.disconnect();
     }, []);
 
-    // Calculate total width
-    const totalWidth = useMemo(() => {
-        return columns.reduce((sum, col, index) => {
-            return sum + getColumnWidth(col, index, dimensionCount);
-        }, 0);
+    const w = useMemo(() => columns.reduce((s, c, i) => s + getColWidth(c, i, dimensionCount), 0), [columns, dimensionCount]);
+
+    // Calculate column left positions
+    const colLefts = useMemo(() => {
+        const lefts: number[] = [];
+        let left = 0;
+        for (let i = 0; i < columns.length; i++) {
+            lefts.push(left);
+            left += getColWidth(columns[i], i, dimensionCount);
+        }
+        return lefts;
     }, [columns, dimensionCount]);
 
-    // Virtual scroll state
-    const {
-        startIndex,
-        endIndex,
-        offsetTop,
-        totalHeight,
-        handleScroll: updateScrollState,
-        actualFirstVisibleIndex,
-    } = useVirtualScroll({
+    const { startIndex, endIndex, offsetTop, totalHeight, handleScroll: updateScroll } = useVirtualScroll({
         totalRows: data.length,
         rowHeight,
-        containerHeight: containerHeight - 48 - 36, // Subtract header and status bar height
+        containerHeight: cHeight - 84,
         overscan: 10,
     });
 
-    // Row grouping calculation for category columns
-    const { getGroupInfo, isGroupingColumn } = useRowSpanning({
-        data,
-        dimensionCount,
-        columnNames: columns.map(c => c.name),
-    });
+    const { getGroupInfo, isGroupingColumn } = useRowSpanning({ data, dimensionCount, columnNames: columns.map(c => c.name) });
 
-    // Reset load trigger when data changes
-    useEffect(() => {
-        loadMoreTriggeredRef.current = false;
-    }, [data.length]);
+    useEffect(() => { loadTriggered.current = false; }, [data.length]);
 
-    // Scroll handler with horizontal sync, prefetch trigger, and infinite scroll detection
     const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-        const target = e.target as HTMLDivElement;
-        const scrollTop = target.scrollTop;
-        const scrollHeight = target.scrollHeight;
-        const clientHeight = target.clientHeight;
+        const t = e.target as HTMLDivElement;
+        setScrollX(t.scrollLeft);
+        setScrollY(t.scrollTop);
+        updateScroll(t.scrollTop);
+        onScroll?.(t.scrollTop, t.scrollLeft);
 
-        // Sync horizontal scroll with header
-        setScrollLeft(target.scrollLeft);
+        const prog = data.length > 0 ? endIndex / data.length : 0;
+        onScrollProgress?.(prog, endIndex);
 
-        updateScrollState(scrollTop);
-        onScroll?.(scrollTop, target.scrollLeft);
-
-        // Calculate scroll progress (0-1) through loaded data
-        const scrollProgress = data.length > 0 ? endIndex / data.length : 0;
-        onScrollProgress?.(scrollProgress, endIndex);
-
-        // Early prefetch trigger at 70% through loaded data
-        const PREFETCH_THRESHOLD = 0.7;
-        if (
-            scrollProgress >= PREFETCH_THRESHOLD &&
-            hasMoreData &&
-            !isLoadingMore &&
-            !isLoading &&
-            !loadMoreTriggeredRef.current &&
-            onLoadMore
-        ) {
-            loadMoreTriggeredRef.current = true;
-            console.log('[VirtualTable] Prefetch triggered at', Math.round(scrollProgress * 100) + '% through loaded data');
+        if (prog >= 0.7 && hasMoreData && !isLoadingMore && !isLoading && !loadTriggered.current && onLoadMore) {
+            loadTriggered.current = true;
             onLoadMore();
         }
 
-        // Also check if near bottom as fallback
-        const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-        const threshold = 500;
-
-        if (
-            distanceFromBottom < threshold &&
-            hasMoreData &&
-            !isLoadingMore &&
-            !isLoading &&
-            !loadMoreTriggeredRef.current &&
-            onLoadMore
-        ) {
-            loadMoreTriggeredRef.current = true;
-            console.log('[VirtualTable] Load more triggered at bottom, distance:', distanceFromBottom);
+        const distBottom = t.scrollHeight - t.scrollTop - t.clientHeight;
+        if (distBottom < 500 && hasMoreData && !isLoadingMore && !isLoading && !loadTriggered.current && onLoadMore) {
+            loadTriggered.current = true;
             onLoadMore();
         }
-    }, [updateScrollState, onScroll, onScrollProgress, hasMoreData, isLoadingMore, isLoading, onLoadMore, data.length, endIndex]);
+    }, [updateScroll, onScroll, onScrollProgress, hasMoreData, isLoadingMore, isLoading, onLoadMore, data.length, endIndex]);
 
-    // Get visible rows
-    const visibleRows = useMemo(() => {
-        return data.slice(startIndex, endIndex);
-    }, [data, startIndex, endIndex]);
+    const visRows = useMemo(() => data.slice(startIndex, endIndex), [data, startIndex, endIndex]);
+
+    // Calculate visible sticky labels for grouped columns
+    const stickyLabels = useMemo(() => {
+        const labels: Array<{
+            key: string;
+            value: string | number | null;
+            type: string;
+            colWidth: number;
+            colLeft: number;
+            groupStartY: number;
+            groupEndY: number;
+        }> = [];
+
+        // Find grouped columns and their current visible groups
+        columns.forEach((col, colIndex) => {
+            if (!isGroupingColumn(colIndex)) return;
+
+            const colWidth = getColWidth(col, colIndex, dimensionCount);
+            const colLeft = colLefts[colIndex];
+
+            // Track which groups we've already added
+            const addedGroups = new Set<string>();
+
+            // Check each visible row for its group
+            for (let i = startIndex; i < endIndex; i++) {
+                const grp = getGroupInfo(i, colIndex);
+                if (!grp) continue;
+
+                const groupKey = `${colIndex}-${grp.startRow}`;
+                if (addedGroups.has(groupKey)) continue;
+                addedGroups.add(groupKey);
+
+                labels.push({
+                    key: groupKey,
+                    value: grp.value,
+                    type: col.type,
+                    colWidth,
+                    colLeft,
+                    groupStartY: grp.startRow * rowHeight,
+                    groupEndY: (grp.startRow + grp.rowCount) * rowHeight,
+                });
+            }
+        });
+
+        return labels;
+    }, [columns, dimensionCount, colLefts, startIndex, endIndex, getGroupInfo, isGroupingColumn, rowHeight]);
 
     return (
-        <div className="virtual-table-container" ref={containerRef}>
-            {/* Fixed Header - scrolls horizontally with body */}
-            <TableHeader
-                columns={columns}
-                dimensionCount={dimensionCount}
-                onSort={onSort}
-                sortColumn={sortColumn}
-                sortDirection={sortDirection}
-                totalWidth={totalWidth}
-                scrollLeft={scrollLeft}
-            />
+        <div className="vtc" ref={containerRef}>
+            <Header cols={columns} dimCount={dimensionCount} onSort={onSort} sortCol={sortColumn} sortDir={sortDirection} w={w} scrollX={scrollX} />
 
-            {/* Scrollable Body */}
-            <div
-                ref={bodyRef}
-                className="virtual-table-body"
-                onScroll={handleScroll}
-            >
-                {/* Total height/width spacer */}
-                <div style={{ height: totalHeight, width: totalWidth, minWidth: totalWidth, position: 'relative' }}>
-                    {/* Visible rows container */}
-                    <div
-                        className="virtual-rows"
-                        style={{
-                            position: 'absolute',
-                            top: offsetTop,
-                            left: 0,
-                            width: totalWidth,
-                            minWidth: totalWidth,
-                        }}
-                    >
-                        {visibleRows.map((rowData, index) => {
-                            const actualRowIndex = startIndex + index;
-                            return (
-                                <VirtualRow
-                                    key={actualRowIndex}
-                                    rowIndex={actualRowIndex}
-                                    rowData={rowData}
-                                    columns={columns}
-                                    style={{ height: rowHeight }}
-                                    dimensionCount={dimensionCount}
-                                    getGroupInfo={getGroupInfo}
-                                    isGroupingColumn={isGroupingColumn}
-                                    totalWidth={totalWidth}
-                                    firstVisibleRowIndex={actualFirstVisibleIndex}
-                                    rowHeight={rowHeight}
-                                />
-                            );
-                        })}
+            <div className="vtb" onScroll={handleScroll}>
+                <div style={{ height: totalHeight, width: w, position: 'relative' }}>
+                    {/* Visible rows */}
+                    <div className="vrows" style={{ position: 'absolute', top: offsetTop, width: w }}>
+                        {visRows.map((row, i) => (
+                            <Row
+                                key={startIndex + i}
+                                idx={startIndex + i}
+                                row={row}
+                                cols={columns}
+                                h={rowHeight}
+                                dimCount={dimensionCount}
+                                getGrp={getGroupInfo}
+                                isGrpCol={isGroupingColumn}
+                                w={w}
+                            />
+                        ))}
                     </div>
 
-                    {/* Load more indicator */}
+                    {/* Sticky group labels - float above rows */}
+                    {stickyLabels.map(lbl => (
+                        <StickyLabel
+                            key={lbl.key}
+                            value={lbl.value}
+                            type={lbl.type}
+                            colWidth={lbl.colWidth}
+                            colLeft={lbl.colLeft}
+                            groupStartY={lbl.groupStartY}
+                            groupEndY={lbl.groupEndY}
+                            scrollTop={scrollY}
+                            rowHeight={rowHeight}
+                            viewportHeight={cHeight - 84}
+                        />
+                    ))}
+
                     {isLoadingMore && (
-                        <div
-                            className="load-more-indicator"
-                            style={{
-                                position: 'absolute',
-                                bottom: 0,
-                                left: 0,
-                                width: totalWidth,
-                                height: 60,
-                            }}
-                        >
-                            <div className="loading-spinner small" />
-                            <span>Loading more rows...</span>
-                        </div>
+                        <span className="lmi" style={{ position: 'absolute', bottom: 0, width: w }}>
+                            <span className="spin sm" />Loading...
+                        </span>
                     )}
                 </div>
-
-                {/* Loading overlay */}
-                {isLoading && (
-                    <div className="loading-overlay">
-                        <div className="loading-spinner" />
-                    </div>
-                )}
-
-                {/* Empty state */}
-                {!isLoading && data.length === 0 && (
-                    <div className="empty-state">No data available</div>
-                )}
+                {isLoading && <span className="lov"><span className="spin" /></span>}
+                {!isLoading && data.length === 0 && <span className="emt">No data</span>}
             </div>
 
-            {/* Status bar */}
-            <div className="virtual-table-status">
-                <span>{totalRows.toLocaleString()} total rows</span>
-                <span>
-                    Loaded: {data.length.toLocaleString()} |
-                    Showing: {startIndex + 1} - {Math.min(endIndex, data.length)}
-                    {hasMoreData && !isLoadingMore && ' | Scroll for more'}
-                    {isLoadingMore && ' | Loading...'}
-                </span>
-            </div>
+            <span className="vts">
+                <span>{totalRows.toLocaleString()} rows</span>
+                <span>Loaded: {data.length.toLocaleString()} | Showing: {startIndex + 1}-{Math.min(endIndex, data.length)}</span>
+            </span>
         </div>
     );
 };

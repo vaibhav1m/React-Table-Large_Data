@@ -1,28 +1,16 @@
-import { LRUCache } from 'lru-cache';
-import hash from 'object-hash';
-import { QueryRequest, CacheConfig } from '../types/data.types';
+const { LRUCache } = require('lru-cache');
+const hash = require('object-hash');
 
-// =============================================================================
 // Cache Service (In-Memory LRU)
-// =============================================================================
-
-interface CacheEntry<T> {
-    data: T;
-    totalRows: number;
-    timestamp: number;
-}
 
 class CacheService {
-    private cache: LRUCache<string, CacheEntry<unknown>>;
-    private config: CacheConfig;
-
     constructor() {
         this.config = {
             ttlSeconds: parseInt(process.env.CACHE_TTL_SECONDS || '300', 10),
             maxSize: parseInt(process.env.CACHE_MAX_SIZE || '100', 10),
         };
 
-        this.cache = new LRUCache<string, CacheEntry<unknown>>({
+        this.cache = new LRUCache({
             max: this.config.maxSize,
             ttl: this.config.ttlSeconds * 1000,
             updateAgeOnGet: true,
@@ -31,11 +19,7 @@ class CacheService {
         console.log(`[Cache] Initialized with TTL=${this.config.ttlSeconds}s, maxSize=${this.config.maxSize}`);
     }
 
-    /**
-     * Generate a unique cache key from query request
-     */
-    generateKey(request: QueryRequest): string {
-        // Create a normalized version for consistent hashing
+    generateKey(request) {
         const normalized = {
             dimensions: [...request.dimensions].sort(),
             metrics: [...request.metrics].sort(),
@@ -50,12 +34,9 @@ class CacheService {
         return hash(normalized);
     }
 
-    /**
-     * Get cached result if available
-     */
-    get<T>(request: QueryRequest): { data: T[]; totalRows: number } | null {
+    get(request) {
         const key = this.generateKey(request);
-        const entry = this.cache.get(key) as CacheEntry<T[]> | undefined;
+        const entry = this.cache.get(key);
 
         if (entry) {
             console.log(`[Cache] HIT for key ${key.substring(0, 8)}...`);
@@ -66,10 +47,7 @@ class CacheService {
         return null;
     }
 
-    /**
-     * Store result in cache
-     */
-    set<T>(request: QueryRequest, data: T[], totalRows: number): void {
+    set(request, data, totalRows) {
         const key = this.generateKey(request);
 
         this.cache.set(key, {
@@ -81,18 +59,12 @@ class CacheService {
         console.log(`[Cache] SET key ${key.substring(0, 8)}... (${data.length} rows, total: ${totalRows})`);
     }
 
-    /**
-     * Invalidate all cache entries
-     */
-    clear(): void {
+    clear() {
         this.cache.clear();
         console.log('[Cache] Cleared all entries');
     }
 
-    /**
-     * Get cache statistics
-     */
-    getStats(): { size: number; maxSize: number; ttlSeconds: number } {
+    getStats() {
         return {
             size: this.cache.size,
             maxSize: this.config.maxSize,
@@ -101,5 +73,5 @@ class CacheService {
     }
 }
 
-// Export singleton instance
-export const cacheService = new CacheService();
+const cacheService = new CacheService();
+module.exports = { cacheService };

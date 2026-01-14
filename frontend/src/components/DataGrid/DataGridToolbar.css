@@ -153,6 +153,17 @@
     max-height: 350px;
 }
 
+.dropdown-item.select-all {
+    font-weight: 600;
+    color: #8b5cf6;
+}
+
+.dropdown-divider {
+    height: 1px;
+    background-color: #e5e5e5;
+    margin: 4px 0;
+}
+
 .date-inputs {
     padding: 8px 12px;
     border-top: 1px solid #e5e5e5;
