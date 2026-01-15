@@ -14,6 +14,7 @@ const api = axios.create({
 // This prevents prefetch from being cancelled when initial fetch is made
 let initialQueryController: AbortController | null = null;
 let prefetchController: AbortController | null = null;
+let searchController: AbortController | null = null;
 
 // =============================================================================
 // Data API Service
@@ -98,13 +99,11 @@ export const dataService = {
                 limit: 100000, // Load all rows
             };
 
-            console.log('[API] Fetching all data for DuckDB...');
             const response = await api.post<ColumnarQueryResponse>(
                 '/api/data/query-raw',
                 request,
                 { signal: initialQueryController.signal }
             );
-            console.log(`[API] Fetched ${response.data.data.length} rows`);
             return response.data;
         } catch (error) {
             if (axios.isCancel(error)) {
@@ -151,17 +150,26 @@ export const dataService = {
 
     /**
      * Search for autocomplete results
+     * Cancels any previous search request to avoid stale results
      */
     async search(query: string, columns?: string[]): Promise<{
         results: Array<{ column: string; value: string; label: string }>;
         groupedResults: Record<string, string[]>;
         queryTimeMs: number;
     }> {
+        // Cancel any existing search request
+        if (searchController) {
+            searchController.abort();
+        }
+        searchController = new AbortController();
+
         const response = await api.post<{
             results: Array<{ column: string; value: string; label: string }>;
             groupedResults: Record<string, string[]>;
             queryTimeMs: number;
-        }>('/api/data/search', { query, columns, limit: 50 });
+        }>('/api/data/search', { query, columns, limit: 50 }, {
+            signal: searchController.signal
+        });
         return response.data;
     },
 };

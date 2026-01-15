@@ -81,17 +81,43 @@ router.post('/query-raw', async (req, res) => {
         request.filters = request.filters ?? [];
         request.sort = request.sort ?? [];
 
+        // Check cache first
+        const cached = cacheService.get(request);
+        if (cached) {
+            return res.json({
+                columns: cached.data.columns,
+                columnTypes: cached.data.columnTypes,
+                data: cached.data.data,
+                totalRows: cached.totalRows,
+                queryTimeMs: Date.now() - startTime,
+                cached: true,
+                cacheAgeMs: cached.cacheAgeMs,
+                dataTimestamp: cached.timestamp,
+            });
+        }
+
         const metadata = queryBuilderService.getMetadata();
         const { sql, countSql } = queryBuilderService.buildQuery(request, metadata.tableName);
 
         console.log('[DataController] Executing raw query:', sql.substring(0, 200) + '...');
 
+        const queryStartTime = Date.now();
         const [dataResult, countResult] = await Promise.all([
             trinoService.queryRaw(sql),
             trinoService.queryRaw(countSql),
         ]);
+        const queryTime = Date.now() - queryStartTime;
 
         const totalRows = Number(countResult.data[0]?.[0]) || 0;
+
+        // Store in cache
+        cacheService.set(request, {
+            columns: dataResult.columns,
+            columnTypes: dataResult.columnTypes,
+            data: dataResult.data,
+        }, totalRows);
+
+        console.log(`[DataController] Query: ${queryTime}ms, Total: ${Date.now() - startTime}ms`);
 
         return res.json({
             columns: dataResult.columns,
@@ -100,6 +126,8 @@ router.post('/query-raw', async (req, res) => {
             totalRows,
             queryTimeMs: Date.now() - startTime,
             cached: false,
+            cacheAgeMs: 0,
+            dataTimestamp: Date.now(),
         });
     } catch (error) {
         console.error('[DataController] Raw query error:', error);

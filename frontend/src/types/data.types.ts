@@ -42,6 +42,8 @@ export interface ColumnarQueryResponse {
     totalRows: number;
     queryTimeMs: number;
     cached: boolean;
+    cacheAgeMs?: number;         // Time since data was cached (ms)
+    dataTimestamp?: number;      // Timestamp when data was fetched
     nextCursor?: string;
 }
 

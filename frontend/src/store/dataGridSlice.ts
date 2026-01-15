@@ -12,7 +12,7 @@ import type {
 // Configuration - Tunable parameters for prefetching
 // =============================================================================
 
-const BATCH_SIZE = 2000;           // Rows per server request
+const BATCH_SIZE = 500;           // Rows per server request
 const MAX_CACHED_ROWS = 10000;     // Max rows to keep in memory
 
 // =============================================================================
@@ -42,6 +42,13 @@ interface PrefetchState extends DataGridState {
 
     // Brand filter
     selectedBrand: string | null;   // null means "All"
+
+    // Drill hierarchy
+    drillHierarchy: string[];       // Ordered list of dimensions from Product Details
+    currentDrillLevel: number;      // How many dimensions are currently shown (1-based)
+
+    // Cache info
+    dataTimestamp: number | null;   // When data was fetched (for "Last updated" display)
 }
 
 const initialState: PrefetchState = {
@@ -77,6 +84,13 @@ const initialState: PrefetchState = {
     lastScrollPosition: 0,
     currentQueryId: 0,
     needsDataRefresh: true,
+
+    // Drill hierarchy - start at level 1
+    drillHierarchy: ['category'],  // Default hierarchy
+    currentDrillLevel: 1,          // Start showing only first dimension
+
+    // Cache info
+    dataTimestamp: null,
 };
 
 // =============================================================================
@@ -192,8 +206,6 @@ export const fetchInitialData = createAsyncThunk(
         // Get ALL metric names from metadata
         const allMetricNames = metadata.metrics.map(m => m.name);
 
-        console.log('[DataGrid] Fetching data with all metrics...');
-
         const request = {
             dimensions: selectedDimensions,
             metrics: allMetricNames,  // Fetch ALL metrics
@@ -230,14 +242,11 @@ export const fetchDataRange = createAsyncThunk(
 
         // Skip if already loaded
         if (isRangeLoaded(loadedRanges, params.offset, limit)) {
-            console.log(`[DataGrid] Range ${params.offset}-${params.offset + limit} already loaded, skipping`);
             return null;
         }
 
         // Get ALL metric names from metadata
         const allMetricNames = metadata.metrics.map(m => m.name);
-
-        console.log(`[DataGrid] Fetching range ${params.offset}-${params.offset + limit} (prefetch: ${params.isPrefetch})`);
 
         const request = {
             dimensions: selectedDimensions,
@@ -401,6 +410,46 @@ const dataGridSlice = createSlice({
         markRefreshComplete: (state) => {
             state.needsDataRefresh = false;
         },
+
+        // Force refresh - clears local data and forces fresh fetch
+        forceRefresh: (state) => {
+            state.allData = [];
+            state.data = [];
+            state.loadedRanges = [];
+            state.needsDataRefresh = true;
+            state.dataTimestamp = null;
+        },
+
+        // Drill hierarchy actions
+        setDrillHierarchy: (state, action: PayloadAction<string[]>) => {
+            state.drillHierarchy = action.payload;
+            // Keep current level if within bounds, otherwise start at 1
+            if (state.currentDrillLevel > action.payload.length) {
+                state.currentDrillLevel = action.payload.length;
+            }
+            // Don't trigger API call - just store the hierarchy
+            // Data will update when user drills up/down
+        },
+        drillDown: (state) => {
+            if (state.currentDrillLevel < state.drillHierarchy.length) {
+                state.currentDrillLevel += 1;
+                // Update selectedDimensions and trigger API call
+                state.selectedDimensions = state.drillHierarchy.slice(0, state.currentDrillLevel);
+                state.allData = [];
+                state.loadedRanges = [];
+                state.needsDataRefresh = true;
+            }
+        },
+        drillUp: (state) => {
+            if (state.currentDrillLevel > 1) {
+                state.currentDrillLevel -= 1;
+                // Update selectedDimensions and trigger API call
+                state.selectedDimensions = state.drillHierarchy.slice(0, state.currentDrillLevel);
+                state.allData = [];
+                state.loadedRanges = [];
+                state.needsDataRefresh = true;
+            }
+        },
     },
     extraReducers: (builder) => {
         builder
@@ -435,6 +484,7 @@ const dataGridSlice = createSlice({
                 state.totalRows = action.payload.totalRows;
                 state.queryTimeMs = action.payload.queryTimeMs;
                 state.cached = action.payload.cached;
+                state.dataTimestamp = action.payload.dataTimestamp || Date.now();
 
                 // Filter to show only selected columns
                 const { visibleColumns, visibleData } = filterVisibleData(
@@ -453,8 +503,6 @@ const dataGridSlice = createSlice({
 
                 // Track loaded range
                 state.loadedRanges = [{ start: 0, end: action.payload.data.length }];
-
-                console.log(`[DataGrid] Initial load complete: ${action.payload.data.length} rows, showing ${visibleColumns.length} columns`);
             })
             .addCase(fetchInitialData.rejected, (state, action) => {
                 state.isLoading = false;
@@ -513,6 +561,11 @@ const dataGridSlice = createSlice({
                 // Update totalRows if changed
                 state.totalRows = action.payload.totalRows;
 
+                // Update data timestamp for "Last updated" display
+                if (action.payload.dataTimestamp) {
+                    state.dataTimestamp = action.payload.dataTimestamp;
+                }
+
                 // Evict old data if cache too large
                 if (state.allData.length > MAX_CACHED_ROWS) {
                     const excessRows = state.allData.length - MAX_CACHED_ROWS;
@@ -532,19 +585,12 @@ const dataGridSlice = createSlice({
                         start: Math.max(0, range.start - excessRows),
                         end: Math.max(0, range.end - excessRows),
                     })).filter(range => range.end > range.start);
-
-                    console.log(`[DataGrid] Evicted ${excessRows} rows to maintain cache limit`);
                 }
-
-                console.log(`[DataGrid] Loaded range ${offset}-${offset + newData.length}, total cached: ${state.allData.length}`);
             })
-            .addCase(fetchDataRange.rejected, (state, action) => {
+            .addCase(fetchDataRange.rejected, (state) => {
                 state.isPrefetching = false;
                 state.isLoading = false;
-                const errorMsg = action.error.message;
-                if (errorMsg !== 'Request cancelled') {
-                    console.error('[DataGrid] Fetch range failed:', errorMsg);
-                }
+                // Error handling without logging
             });
     },
 });
@@ -565,6 +611,10 @@ export const {
     clearError,
     updateScrollPosition,
     markRefreshComplete,
+    forceRefresh,
+    setDrillHierarchy,
+    drillDown,
+    drillUp,
 } = dataGridSlice.actions;
 
 // Selectors

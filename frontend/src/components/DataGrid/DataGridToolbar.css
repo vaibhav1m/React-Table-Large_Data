@@ -102,6 +102,39 @@
     border-color: #7c3aed;
 }
 
+/* Drill Up/Down Buttons */
+.drill-buttons {
+    display: flex;
+    gap: 4px;
+}
+
+.drill-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: 1px solid #e5e5e5;
+    border-radius: 4px;
+    background-color: #ffffff;
+    font-size: 16px;
+    font-weight: 600;
+    color: #333;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.drill-button:hover:not(:disabled) {
+    background-color: #f0e7ff;
+    border-color: #8b5cf6;
+    color: #8b5cf6;
+}
+
+.drill-button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
 .dropdown-arrow {
     font-size: 10px;
     opacity: 0.7;
@@ -219,4 +252,39 @@
 .loading {
     color: #8b5cf6;
     font-weight: 500;
+}
+
+.last-updated {
+    color: #999;
+    font-size: 11px;
+}
+
+/* Refresh Button */
+.refresh-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: transparent;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: all 0.2s ease;
+    margin-left: 8px;
+}
+
+.refresh-btn:hover:not(:disabled) {
+    background: #f0e7ff;
+    border-color: #8b5cf6;
+}
+
+.refresh-btn:active:not(:disabled) {
+    transform: rotate(180deg);
+}
+
+.refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }

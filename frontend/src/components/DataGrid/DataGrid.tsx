@@ -9,7 +9,7 @@ import {
     fetchMetadata,
     fetchInitialData,
     fetchDataRange,
-    setSelectedDimensions,
+    setDrillHierarchy,
     setSort,
     selectHasMoreData,
 } from '../../store/dataGridSlice';
@@ -46,7 +46,7 @@ interface ExtendedState {
 }
 
 // Batch size for loading more data
-const BATCH_SIZE = 2000;
+const BATCH_SIZE = 500;
 
 export const DataGrid: React.FC = () => {
     const dispatch = useAppDispatch();
@@ -74,14 +74,12 @@ export const DataGrid: React.FC = () => {
 
     // Fetch metadata on mount
     useEffect(() => {
-        console.log('[DataGrid] Fetching metadata...');
         dispatch(fetchMetadata());
     }, [dispatch]);
 
     // Fetch data when needsDataRefresh is true
     useEffect(() => {
         if (metadata && needsDataRefresh && selectedDimensions.length > 0) {
-            console.log('[DataGrid] Data refresh needed, fetching...');
             dispatch(fetchInitialData());
         }
     }, [dispatch, metadata, needsDataRefresh, selectedDimensions]);
@@ -130,7 +128,6 @@ export const DataGrid: React.FC = () => {
     // Handle sort - triggers new server query
     const handleSort = useCallback(
         (column: string, direction: 'asc' | 'desc') => {
-            console.log('[DataGrid] Sort changed:', column, direction);
             dispatch(setSort([{ column, direction }]));
         },
         [dispatch]
@@ -143,7 +140,6 @@ export const DataGrid: React.FC = () => {
         const nextOffset = allData.length;
         if (nextOffset >= totalRows) return;
 
-        console.log('[DataGrid] Loading more data from offset:', nextOffset);
         dispatch(fetchDataRange({ offset: nextOffset, limit: BATCH_SIZE, isPrefetch: false }));
     }, [dispatch, allData.length, totalRows, isLoading, isPrefetching]);
 
@@ -152,10 +148,10 @@ export const DataGrid: React.FC = () => {
         // Prefetch logic is handled by VirtualTable's onLoadMore
     }, []);
 
-    // Handle drill-down apply
+    // Handle drill-down apply - sets the hierarchy order
     const handleDrillDownApply = useCallback(
         (dimensions: string[]) => {
-            dispatch(setSelectedDimensions(dimensions));
+            dispatch(setDrillHierarchy(dimensions));
             setShowDrillDown(false);
         },
         [dispatch]

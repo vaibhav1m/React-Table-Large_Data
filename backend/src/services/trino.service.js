@@ -38,6 +38,9 @@ class TrinoService {
             const allData = [];
             let columns = [];
 
+            // Adaptive polling: start fast, back off when waiting for data
+            let pollDelay = 10;
+
             while (result.nextUri) {
                 if (result.columns && !columns.length) {
                     columns = result.columns.map(col => ({
@@ -49,9 +52,12 @@ class TrinoService {
                 if (result.data) {
                     const rows = this.transformRows(result.data, columns);
                     allData.push(...rows);
+                    pollDelay = 10; // Reset to fast when data arrives
+                } else {
+                    pollDelay = Math.min(pollDelay * 1.5, 100); // Backoff when no data
                 }
 
-                await this.delay(100);
+                await this.delay(pollDelay);
                 const nextResponse = await fetch(result.nextUri, {
                     headers: { 'X-Trino-User': this.config.user },
                 });
@@ -156,6 +162,9 @@ class TrinoService {
             const columnTypes = [];
             const allData = [];
 
+            // Adaptive polling: start fast, back off when waiting for data
+            let pollDelay = 10;
+
             while (result.nextUri) {
                 if (result.columns && !columnNames.length) {
                     result.columns.forEach(col => {
@@ -166,9 +175,12 @@ class TrinoService {
 
                 if (result.data) {
                     allData.push(...result.data);
+                    pollDelay = 10; // Reset to fast when data arrives
+                } else {
+                    pollDelay = Math.min(pollDelay * 1.5, 100); // Backoff when no data
                 }
 
-                await this.delay(100);
+                await this.delay(pollDelay);
                 const nextResponse = await fetch(result.nextUri, {
                     headers: { 'X-Trino-User': this.config.user },
                 });

@@ -40,7 +40,12 @@ class CacheService {
 
         if (entry) {
             console.log(`[Cache] HIT for key ${key.substring(0, 8)}...`);
-            return { data: entry.data, totalRows: entry.totalRows };
+            return {
+                data: entry.data,
+                totalRows: entry.totalRows,
+                timestamp: entry.timestamp,
+                cacheAgeMs: Date.now() - entry.timestamp
+            };
         }
 
         console.log(`[Cache] MISS for key ${key.substring(0, 8)}...`);

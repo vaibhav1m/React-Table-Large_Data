@@ -61,7 +61,11 @@ export const SearchBar: React.FC<SearchBarProps> = ({
             const response = await dataService.search(searchQuery);
             setResults(response.results);
             setShowDropdown(response.results.length > 0);
-        } catch (error) {
+        } catch (error: unknown) {
+            // Ignore cancelled requests (this is expected when typing quickly)
+            if (error && typeof error === 'object' && 'name' in error && error.name === 'CanceledError') {
+                return; // Silently ignore - a newer request is in progress
+            }
             console.error('[SearchBar] Search error:', error);
             setResults([]);
         } finally {
@@ -114,9 +118,18 @@ export const SearchBar: React.FC<SearchBarProps> = ({
         setResults([]);
         setShowDropdown(false);
         dispatch(setFilters([])); // Clear all filters
-        dispatch(fetchInitialData()); // Reload all data
+        dispatch(fetchInitialData()); // Reload all data (will use cache if available)
         inputRef.current?.focus();
     }, [dispatch]);
+
+    // Handle search button click
+    const handleSearchClick = useCallback(() => {
+        if (query.length >= 2) {
+            performSearch(query);
+        } else {
+            inputRef.current?.focus();
+        }
+    }, [query, performSearch]);
 
     // Handle keyboard navigation
     const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -186,10 +199,17 @@ export const SearchBar: React.FC<SearchBarProps> = ({
     return (
         <div className="search-bar-container">
             <div className={`search-input-wrapper ${selectedFilter ? 'has-filter' : ''}`}>
-                <svg className="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="11" cy="11" r="8" />
-                    <path d="M21 21l-4.35-4.35" />
-                </svg>
+                <button
+                    className="search-icon-btn"
+                    onClick={handleSearchClick}
+                    title="Search"
+                    type="button"
+                >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="11" cy="11" r="8" />
+                        <path d="M21 21l-4.35-4.35" />
+                    </svg>
+                </button>
 
                 {selectedFilter && (
                     <span className="filter-badge">

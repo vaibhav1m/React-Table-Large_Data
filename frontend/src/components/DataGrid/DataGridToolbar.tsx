@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useAppDispatch, useAppSelector } from '../../hooks/useRedux';
-import { setComparison, toggleMetric, setSelectedMetrics } from '../../store/dataGridSlice';
+import { setComparison, toggleMetric, setSelectedMetrics, drillUp, drillDown, forceRefresh } from '../../store/dataGridSlice';
 import { SearchBar } from './SearchBar';
 import './DataGridToolbar.css';
 
@@ -20,9 +20,25 @@ export function DataGridToolbar({
     onDrillDownClick,
 }: DataGridToolbarProps) {
     const dispatch = useAppDispatch();
-    const { selectedMetrics, metadata, comparison } = useAppSelector(
+    const { selectedMetrics, metadata, comparison, drillHierarchy, currentDrillLevel, dataTimestamp } = useAppSelector(
         (state) => state.dataGrid
     );
+
+    // Format "Last updated" timestamp
+    const lastUpdatedText = useMemo(() => {
+        if (!dataTimestamp) return null;
+        const ageMs = Date.now() - dataTimestamp;
+        const ageSec = Math.floor(ageMs / 1000);
+        if (ageSec < 60) return 'just now';
+        const ageMin = Math.floor(ageSec / 60);
+        if (ageMin < 60) return `${ageMin}m ago`;
+        const ageHr = Math.floor(ageMin / 60);
+        return `${ageHr}h ago`;
+    }, [dataTimestamp]);
+
+    // Drill button states
+    const canDrillUp = currentDrillLevel > 1;
+    const canDrillDown = currentDrillLevel < drillHierarchy.length;
 
     const [showMetrics, setShowMetrics] = useState(false);
     const [showDatePicker, setShowDatePicker] = useState(false);
@@ -213,7 +229,27 @@ export function DataGridToolbar({
                     )}
                 </div>
 
-                {/* Drill-down button */}
+                {/* Drill Up/Down buttons */}
+                <div className="drill-buttons">
+                    <button
+                        className="drill-button"
+                        onClick={() => dispatch(drillUp())}
+                        disabled={!canDrillUp}
+                        title="Drill Up - Show less detail"
+                    >
+                        ↑
+                    </button>
+                    <button
+                        className="drill-button"
+                        onClick={() => dispatch(drillDown())}
+                        disabled={!canDrillDown}
+                        title="Drill Down - Show more detail"
+                    >
+                        ↓
+                    </button>
+                </div>
+
+                {/* Product Details button */}
                 <button className="toolbar-button primary" onClick={onDrillDownClick}>
                     Product Details
                     <span className="dropdown-arrow">▼</span>
@@ -235,9 +271,24 @@ export function DataGridToolbar({
                             <span className="query-time">
                                 {queryTimeMs}ms {cached && '(cached)'}
                             </span>
+                            {lastUpdatedText && (
+                                <span className="last-updated" title="Last updated">
+                                    • {lastUpdatedText}
+                                </span>
+                            )}
                         </>
                     )}
                 </div>
+
+                {/* Refresh button */}
+                <button
+                    className="refresh-btn"
+                    onClick={() => dispatch(forceRefresh())}
+                    disabled={isLoading}
+                    title="Refresh data"
+                >
+                    🔄
+                </button>
             </div>
         </div>
     );
